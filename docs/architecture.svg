@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 380" role="img" aria-label="agent 用 API Key 发布到 artifactd；读者通过查看页打开沙箱中的内容；管理员通过后台管理；数据存在 SQLite 和按内容寻址的文件目录">
+  <style>
+    .bg { fill: #ffffff; }
+    .box { fill: #f5f6f8; stroke: #3d4350; stroke-width: 1.4; }
+    .core { fill: #eef0fb; stroke: #3346a8; stroke-width: 1.8; }
+    .sand { fill: #fff7e6; stroke: #a0670a; stroke-width: 1.4; stroke-dasharray: 5 4; }
+    .t { fill: #1c2029; font: 14px -apple-system, "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif; }
+    .s { fill: #5f6775; font: 12px -apple-system, "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif; }
+    .m { fill: #5f6775; font: 11.5px ui-monospace, Menlo, Consolas, monospace; }
+    .ln { stroke: #3d4350; stroke-width: 1.4; fill: none; }
+    .ar { fill: #3d4350; }
+    @media (prefers-color-scheme: dark) {
+      .bg { fill: #16181d; } .box { fill: #1f232a; stroke: #aab1bd; } .core { fill: #232a46; stroke: #9aa8ff; }
+      .sand { fill: #2f2614; stroke: #f0c674; } .t { fill: #e5e8ee; } .s, .m { fill: #a3aab6; } .ln { stroke: #aab1bd; } .ar { fill: #aab1bd; }
+    }
+  </style>
+  <defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="ar" d="M0 0L10 5L0 10z"/></marker></defs>
+  <rect class="bg" width="880" height="380" rx="12"/>
+
+  <!-- 左列：使用者 -->
+  <rect class="box" x="24" y="40" width="168" height="64" rx="8"/>
+  <text class="t" x="108" y="68" text-anchor="middle">agent</text>
+  <text class="s" x="108" y="88" text-anchor="middle">pi、Claude Code、Codex</text>
+  <rect class="box" x="24" y="158" width="168" height="64" rx="8"/>
+  <text class="t" x="108" y="186" text-anchor="middle">读者</text>
+  <text class="s" x="108" y="206" text-anchor="middle">浏览器</text>
+  <rect class="box" x="24" y="276" width="168" height="64" rx="8"/>
+  <text class="t" x="108" y="304" text-anchor="middle">管理员 / 用户</text>
+  <text class="s" x="108" y="324" text-anchor="middle">浏览器，登录后台</text>
+
+  <!-- 中列：服务 -->
+  <rect class="core" x="300" y="24" width="300" height="332" rx="12"/>
+  <text class="t" x="450" y="50" text-anchor="middle" font-weight="600">artifactd</text>
+  <text class="m" x="318" y="84">/api/v1/*</text><text class="s" x="420" y="84">发布、编辑、版本、对比</text>
+  <text class="m" x="318" y="112">/skill.tar.gz</text><text class="s" x="420" y="112">技能包</text>
+  <text class="m" x="318" y="190">/a/{id}</text><text class="s" x="420" y="190">查看页、历史、对比</text>
+  <text class="m" x="318" y="306">/admin/</text><text class="s" x="420" y="306">管理后台</text>
+  <rect class="sand" x="314" y="208" width="272" height="56" rx="8"/>
+  <text class="m" x="328" y="232">/c/{id}/v{n}/…</text>
+  <text class="s" x="328" y="252">内容本体：CSP sandbox，不透明源</text>
+
+  <!-- 右列：存储 -->
+  <rect class="box" x="700" y="110" width="156" height="64" rx="8"/>
+  <text class="t" x="778" y="138" text-anchor="middle">SQLite</text>
+  <text class="s" x="778" y="158" text-anchor="middle">用户、密钥、版本、审计</text>
+  <rect class="box" x="700" y="206" width="156" height="64" rx="8"/>
+  <text class="t" x="778" y="234" text-anchor="middle">blobs/</text>
+  <text class="s" x="778" y="254" text-anchor="middle">按 sha256 存文件</text>
+
+  <!-- 连线 -->
+  <path class="ln" d="M192 72H296" marker-end="url(#a)"/>
+  <text class="s" x="244" y="64" text-anchor="middle">API Key</text>
+  <path class="ln" d="M192 190H296" marker-end="url(#a)"/>
+  <text class="s" x="244" y="182" text-anchor="middle">打开链接</text>
+  <path class="ln" d="M450 196V204" marker-end="url(#a)"/>
+  <path class="ln" d="M192 308H296" marker-end="url(#a)"/>
+  <text class="s" x="244" y="300" text-anchor="middle">会话 + CSRF</text>
+  <path class="ln" d="M600 142H696" marker-end="url(#a)"/>
+  <path class="ln" d="M600 238H696" marker-end="url(#a)"/>
+</svg>

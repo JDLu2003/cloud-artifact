@@ -1,0 +1,39 @@
+{{define "history.tmpl"}}{{template "head" (print .A.Title " 的历史版本")}}<meta name="csrf" content="{{.CSRF}}"></head>
+<body>
+<header class="bar">
+  {{template "mark"}}
+  <div class="bar-title"><h1>{{.A.Title}}</h1><span class="bar-meta"><span>历史版本</span></span></div>
+  <nav class="bar-actions"><a class="btn outline" href="/a/{{.A.ID}}">查看当前版本</a>{{template "userlink" .User}}</nav>
+</header>
+<main class="page">
+  <h2>历史版本</h2>
+  <p class="lead">每次发布、局部编辑或恢复都会生成一个新版本，旧版本不会被改写。恢复某个版本时，会以它的内容生成一个新版本。</p>
+  <div class="scroll-x">
+  <table class="list">
+    <thead><tr><th>版本</th><th>时间</th><th>说明</th><th>方式</th><th>作者</th><th class="num">文件</th><th class="num">大小</th><th>检查</th><th>操作</th></tr></thead>
+    <tbody>
+    {{range $i, $v := .Versions}}
+    <tr{{if eq $v.Number $.A.CurrentVersion}} class="current"{{end}}>
+      <td class="num"><a href="/a/{{$.A.ID}}?v={{$v.Number}}">v{{$v.Number}}</a>{{if eq $v.Number $.A.CurrentVersion}} <span class="pill">当前</span>{{end}}</td>
+      <td class="num" style="white-space:nowrap">{{time $v.CreatedAt}}</td>
+      <td>{{if $v.Message}}{{$v.Message}}{{else}}<span style="color:var(--faint)">未填写</span>{{end}}</td>
+      <td style="white-space:nowrap">{{sourceLabel $v.Source}}</td>
+      <td>{{$v.AuthorName}}</td>
+      <td class="num">{{$v.FileCount}}</td>
+      <td class="num" style="white-space:nowrap">{{bytes $v.TotalSize}}</td>
+      <td>{{if gt $v.Warnings 0}}<span class="pill warn">{{$v.Warnings}} 个错误</span>{{else}}<span style="color:var(--faint)">通过</span>{{end}}</td>
+      <td style="white-space:nowrap">
+        {{if gt $v.Number 1}}<a class="btn" href="/a/{{$.A.ID}}/diff?from={{sub $v.Number 1}}&to={{$v.Number}}">与上一版对比</a>{{end}}
+        <a class="btn" href="/a/{{$.A.ID}}/source?v={{$v.Number}}">源码</a>
+        {{if ne $v.Number $.A.CurrentVersion}}<button class="btn outline" type="button" data-restore="{{$v.Number}}" data-id="{{$.A.ID}}">恢复为新版本</button>{{end}}
+      </td>
+    </tr>
+    {{end}}
+    </tbody>
+  </table>
+  </div>
+  <p id="restore-status" role="status" style="color:var(--muted);font-size:13px"></p>
+</main>
+<script src="/_viewer/viewer.js"></script>
+</body>
+</html>{{end}}

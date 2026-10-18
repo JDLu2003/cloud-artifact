@@ -1,0 +1,17 @@
+# 用本机交叉编译好的二进制构建镜像，适合内存不足 2 GB、不宜在本机编译的服务器。
+# 先在任意有 Go 的机器上运行 make linux，把 bin/artifactd-linux-<架构> 放到项目目录里。
+FROM alpine:3.20
+ARG TARGETARCH=amd64
+RUN apk add --no-cache ca-certificates tzdata su-exec \
+ && adduser -D -H -u 10001 artifact \
+ && mkdir -p /data && chown artifact:artifact /data
+COPY bin/artifactd-linux-${TARGETARCH} /usr/local/bin/artifactd
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/artifactd /usr/local/bin/docker-entrypoint.sh
+ENV ARTIFACT_DATA_DIR=/data ARTIFACT_PORT=8790 TZ=Asia/Shanghai
+EXPOSE 8790
+VOLUME /data
+HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
+  CMD wget -qO- http://127.0.0.1:8790/healthz >/dev/null || exit 1
+ENTRYPOINT ["docker-entrypoint.sh"]
+CMD ["serve"]

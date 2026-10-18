@@ -1,0 +1,140 @@
+<!-- TEMPLATE-SAMPLE：这是模板里的示例内容。替换成真实内容后删除这一行，否则检查会报错。 -->
+<title>客服工单周报</title>
+<meta name="description" content="最近 8 周客服工单量、首次响应时间与积压情况">
+<style>
+/* 版式：顶部摘要行（4 个指标）→ 两张图并排 → 明细表；窄屏全部单列。 */
+:root {
+  --bg: #f6f7f8;
+  --surface: #ffffff;
+  --fg: #1d2125;
+  --muted: #5e6670;
+  --line: #e0e3e7;
+  --accent: #3b5bdb;      /* 按主题修改 */
+  --good: #237a4b; --good-bg: #e4f3ea;
+  --warn: #8a5a00; --warn-bg: #fbf0d9;
+  --bad: #b3261e;  --bad-bg: #fbe6e4;
+  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) { --bg: #141618; --surface: #1c1f22; --fg: #e5e7ea; --muted: #a0a7b0; --line: #2c3035; --accent: #91a7ff;
+    --good: #82d1a2; --good-bg: #183324; --warn: #f0c674; --warn-bg: #3a2d12; --bad: #f2a29b; --bad-bg: #3d1d1a; color-scheme: dark; }
+}
+:root[data-theme="dark"] { --bg: #141618; --surface: #1c1f22; --fg: #e5e7ea; --muted: #a0a7b0; --line: #2c3035; --accent: #91a7ff;
+  --good: #82d1a2; --good-bg: #183324; --warn: #f0c674; --warn-bg: #3a2d12; --bad: #f2a29b; --bad-bg: #3d1d1a; color-scheme: dark; }
+
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.6 var(--sans); }
+main {
+  max-width: 1180px; margin: 0 auto;
+  padding-block: 32px 64px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: grid; gap: 20px;
+}
+header h1 { font-size: 24px; margin: 0 0 4px; font-weight: 650; }
+header p { margin: 0; color: var(--muted); }
+.sample { display: inline-block; margin-left: 8px; font-size: 12px; padding: 0 8px; border-radius: 999px; background: var(--warn-bg); color: var(--warn); vertical-align: 3px; }
+
+.kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.kpi { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; min-width: 0; }
+.kpi .label { color: var(--muted); font-size: 13.5px; }
+.kpi .value { font-size: 28px; font-weight: 650; font-variant-numeric: tabular-nums; line-height: 1.3; margin-top: 2px; }
+.kpi .delta { font-size: 13px; font-variant-numeric: tabular-nums; }
+.up-bad { color: var(--bad); } .down-good { color: var(--good); } .flat { color: var(--muted); }
+
+.charts { display: grid; grid-template-columns: 3fr 2fr; gap: 12px; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 16px; min-width: 0; }
+.card h2 { font-size: 15px; margin: 0 0 2px; font-weight: 600; }
+.card .sub { color: var(--muted); font-size: 13px; margin: 0 0 10px; }
+.chart { position: relative; height: 260px; }
+
+.table-wrap { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 14px; }
+th, td { padding: 9px 10px; border-bottom: 1px solid var(--line); text-align: left; white-space: nowrap; }
+th { color: var(--muted); font-weight: 500; font-size: 13px; }
+td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; }
+tr:last-child td { border-bottom: 0; }
+.st { display: inline-block; padding: 0 8px; border-radius: 999px; font-size: 12.5px; line-height: 22px; }
+.st.ok { background: var(--good-bg); color: var(--good); }
+.st.warn { background: var(--warn-bg); color: var(--warn); }
+.st.bad { background: var(--bad-bg); color: var(--bad); }
+footer { color: var(--muted); font-size: 13px; }
+
+@media (max-width: 860px) { .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } .charts { grid-template-columns: 1fr; } }
+</style>
+
+<main>
+  <header>
+    <h1>客服工单周报 <span class="sample">示例数据</span></h1>
+    <p>第 41 周（10 月 6 日至 12 日）。积压工单连续三周上升，主要来自“退款”类。</p>
+  </header>
+
+  <section class="kpis" aria-label="本周摘要">
+    <div class="kpi"><div class="label">新建工单</div><div class="value">1284</div><div class="delta up-bad">比上周 +9.6%</div></div>
+    <div class="kpi"><div class="label">首次响应中位数</div><div class="value">18 分钟</div><div class="delta down-good">比上周 −4 分钟</div></div>
+    <div class="kpi"><div class="label">积压（超过 48 小时）</div><div class="value">212</div><div class="delta up-bad">比上周 +57</div></div>
+    <div class="kpi"><div class="label">满意度</div><div class="value">4.6</div><div class="delta flat">与上周持平</div></div>
+  </section>
+
+  <section class="charts">
+    <div class="card">
+      <h2>积压工单按类别</h2>
+      <p class="sub">最近 8 周，超过 48 小时未解决的工单数</p>
+      <div class="chart"><canvas id="backlog" role="img" aria-label="退款类积压从第 38 周开始上升，第 41 周达到 131 单"></canvas></div>
+    </div>
+    <div class="card">
+      <h2>本周新建工单来源</h2>
+      <p class="sub">按渠道</p>
+      <div class="chart"><canvas id="channel" role="img" aria-label="应用内 612 单，邮件 389 单，电话 283 单"></canvas></div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>各组处理情况</h2>
+    <p class="sub">本周</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>小组</th><th class="n">新建</th><th class="n">已解决</th><th class="n">积压</th><th class="n">首次响应</th><th>状态</th></tr></thead>
+        <tbody>
+          <tr><td>支付与退款</td><td class="n">468</td><td class="n">371</td><td class="n">131</td><td class="n">26 分钟</td><td><span class="st bad">积压上升</span></td></tr>
+          <tr><td>账号与登录</td><td class="n">402</td><td class="n">415</td><td class="n">38</td><td class="n">12 分钟</td><td><span class="st ok">正常</span></td></tr>
+          <tr><td>配送</td><td class="n">297</td><td class="n">281</td><td class="n">33</td><td class="n">17 分钟</td><td><span class="st warn">需关注</span></td></tr>
+          <tr><td>其他</td><td class="n">117</td><td class="n">120</td><td class="n">10</td><td class="n">15 分钟</td><td><span class="st ok">正常</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <footer>数据来源：工单系统导出，截至 10 月 12 日 24:00。积压指创建超过 48 小时仍未解决的工单。</footer>
+</main>
+
+<script src="/_lib/chartjs/chart.umd.js"></script>
+<script>
+(function () {
+  if (!window.Chart) return;
+  var css = getComputedStyle(document.documentElement);
+  var v = function (n) { return css.getPropertyValue(n).trim(); };
+  Chart.defaults.color = v('--muted');
+  Chart.defaults.borderColor = v('--line');
+  Chart.defaults.font.family = v('--sans');
+  var weeks = ['34', '35', '36', '37', '38', '39', '40', '41'].map(function (w) { return '第 ' + w + ' 周'; });
+  // 要说明的“退款”用强调色，其余用中性色
+  new Chart(document.getElementById('backlog'), {
+    type: 'line',
+    data: { labels: weeks, datasets: [
+      { label: '退款', data: [42, 45, 40, 44, 63, 88, 104, 131], borderColor: v('--accent'), backgroundColor: v('--accent'), borderWidth: 2.5, pointRadius: 2, tension: 0.25 },
+      { label: '其他类别', data: [70, 66, 72, 69, 71, 75, 51, 81], borderColor: v('--muted'), backgroundColor: v('--muted'), borderWidth: 1.5, pointRadius: 0, tension: 0.25, borderDash: [4, 3] }
+    ] },
+    options: { maintainAspectRatio: false, interaction: { mode: 'index', intersect: false },
+      plugins: { legend: { position: 'bottom', labels: { boxWidth: 12, boxHeight: 2 } } },
+      scales: { y: { beginAtZero: true }, x: { grid: { display: false }, ticks: { maxRotation: 0, autoSkipPadding: 12 } } } }
+  });
+  new Chart(document.getElementById('channel'), {
+    type: 'bar',
+    data: { labels: ['应用内', '邮件', '电话'], datasets: [{ data: [612, 389, 283], backgroundColor: [v('--accent'), v('--muted'), v('--muted')], borderRadius: 4, barThickness: 22 }] },
+    options: { indexAxis: 'y', maintainAspectRatio: false, plugins: { legend: { display: false } },
+      scales: { x: { beginAtZero: true }, y: { grid: { display: false } } } }
+  });
+})();
+</script>

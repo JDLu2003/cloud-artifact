@@ -1,0 +1,28 @@
+{{define "view.tmpl"}}{{template "head" .A.Title}}</head>
+<body class="view">
+{{if not .Bare}}
+<header class="bar">
+  {{template "mark"}}
+  <div class="bar-title">
+    <h1 title="{{.A.Title}}">{{.A.Title}}</h1>
+    <span class="bar-meta"><span>{{.A.OwnerName}}</span><span class="num">v{{.V.Number}}</span><span class="hide-sm">{{ago .V.CreatedAt}}更新</span>{{if ne .A.Visibility "unlisted"}}<span class="pill">{{visLabel .A.Visibility}}</span>{{end}}</span>
+  </div>
+  <nav class="bar-actions" aria-label="操作">
+    {{if .Manage}}
+    <select id="ver-select" class="btn" data-base="/a/{{.A.ID}}" aria-label="切换版本">
+      {{range .Versions}}<option value="{{.Number}}"{{if eq .Number $.V.Number}} selected{{end}}>v{{.Number}}{{if .Message}}：{{.Message}}{{end}}</option>{{end}}
+    </select>
+    <a class="btn" href="/a/{{.A.ID}}/history">历史</a>
+    {{if gt .V.Number 1}}<a class="btn" href="/a/{{.A.ID}}/diff?from={{sub .V.Number 1}}&to={{.V.Number}}">对比</a>{{end}}
+    <a class="btn hide-sm" href="/a/{{.A.ID}}/source?v={{.V.Number}}">源码</a>
+    {{end}}
+    <a class="btn outline" href="{{.Src}}" target="_blank" rel="noopener">新窗口打开</a>
+  </nav>
+</header>
+{{if not .IsHead}}<div class="notice" role="status"><span>你正在看历史版本 v{{.V.Number}}，当前版本是 v{{.A.CurrentVersion}}。</span><a href="/a/{{.A.ID}}">回到当前版本</a><a href="/a/{{.A.ID}}/diff?from={{.V.Number}}&to={{.A.CurrentVersion}}">与当前版本对比</a><a href="/a/{{.A.ID}}/history">去历史页恢复</a></div>{{end}}
+{{if .A.DeletedAt}}<div class="notice" role="status">这个 artifact 在回收站里，只有所有者和管理员能看到。</div>{{end}}
+{{end}}
+<iframe src="{{.Src}}" title="{{.A.Title}}" sandbox="allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-modals allow-downloads allow-pointer-lock" allow="fullscreen; clipboard-write" allowfullscreen referrerpolicy="no-referrer"></iframe>
+<script src="/_viewer/viewer.js"></script>
+</body>
+</html>{{end}}

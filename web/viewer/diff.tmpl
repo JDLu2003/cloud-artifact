@@ -1,0 +1,58 @@
+{{define "diff.tmpl"}}{{template "head" (print .A.Title " 的版本对比")}}</head>
+<body>
+<header class="bar">
+  {{template "mark"}}
+  <div class="bar-title"><h1>{{.A.Title}}</h1><span class="bar-meta"><span>版本对比</span></span></div>
+  <nav class="bar-actions"><a class="btn" href="/a/{{.A.ID}}/history">历史</a><a class="btn outline" href="/a/{{.A.ID}}">查看当前版本</a></nav>
+</header>
+<main class="page">
+  <div class="diff-head">
+    <form method="get" action="/a/{{.A.ID}}/diff">
+      <label for="from">从</label>
+      <select class="btn" id="from" name="from">{{range .Versions}}<option value="{{.Number}}"{{if eq .Number $.From}} selected{{end}}>v{{.Number}}</option>{{end}}</select>
+      <label for="to">到</label>
+      <select class="btn" id="to" name="to">{{range .Versions}}<option value="{{.Number}}"{{if eq .Number $.To}} selected{{end}}>v{{.Number}}</option>{{end}}</select>
+      {{if eq .Mode "render"}}<input type="hidden" name="mode" value="render">{{end}}
+      <button class="btn outline" type="submit">对比</button>
+    </form>
+    {{if .D}}
+    <span class="tabs"><a href="/a/{{.A.ID}}/diff?from={{.From}}&to={{.To}}"{{if ne .Mode "render"}} class="on"{{end}}>源码对比</a><a href="/a/{{.A.ID}}/diff?from={{.From}}&to={{.To}}&mode=render"{{if eq .Mode "render"}} class="on"{{end}}>页面并排</a></span>
+    <span class="num">{{.D.Changed}} 个文件有变化，<span class="stat-add">+{{.D.Added}}</span> <span class="stat-del">−{{.D.Removed}}</span> 行</span>
+    {{end}}
+  </div>
+  {{if .Empty}}<p class="lead">{{.Empty}}</p>{{end}}
+  {{if .D}}
+    {{if eq .Mode "render"}}
+    <div class="render-pair">
+      <figure><figcaption>v{{.From}}</figcaption><iframe src="{{.FromSrc}}" title="v{{.From}}" sandbox="allow-scripts allow-forms allow-popups allow-modals" referrerpolicy="no-referrer"></iframe></figure>
+      <figure><figcaption>v{{.To}}</figcaption><iframe src="{{.ToSrc}}" title="v{{.To}}" sandbox="allow-scripts allow-forms allow-popups allow-modals" referrerpolicy="no-referrer"></iframe></figure>
+    </div>
+    {{else}}
+    {{range .D.Files}}{{if ne .Status "unchanged"}}
+    <section class="file-block">
+      <header>
+        <span class="path">{{.Path}}</span>
+        <span class="pill{{if eq .Status "removed"}} warn{{end}}">{{if eq .Status "added"}}新增{{else if eq .Status "removed"}}删除{{else}}修改{{end}}</span>
+        {{if not .Binary}}<span class="num"><span class="stat-add">+{{.Added}}</span> <span class="stat-del">−{{.Removed}}</span></span>{{end}}
+        <span class="num" style="color:var(--muted)">{{bytes .OldSize}} → {{bytes .NewSize}}</span>
+      </header>
+      {{if .Binary}}<div class="empty">二进制文件，不逐行对比。</div>
+      {{else if .TooBig}}<div class="empty">文件过大，不逐行对比。</div>
+      {{else}}
+      <div class="scroll-x"><table class="diff">
+        <colgroup><col style="width:3.6em"><col><col style="width:3.6em"><col></colgroup>
+        {{range .Rows}}
+        {{if eq .Kind "skip"}}<tr class="skip"><td colspan="4">省略 {{.Skip}} 行未改动的内容</td></tr>
+        {{else if .Inline}}<tr class="chg inline"><td class="ln">{{.LN}}</td><td class="l has">{{range .LSeg}}{{if .Changed}}<mark>{{.Text}}</mark>{{else}}{{.Text}}{{end}}{{end}}</td><td class="ln">{{.RN}}</td><td class="r has">{{range .RSeg}}{{if .Changed}}<mark>{{.Text}}</mark>{{else}}{{.Text}}{{end}}{{end}}</td></tr>
+        {{else}}<tr class="{{.Kind}}"><td class="ln">{{if .LN}}{{.LN}}{{end}}</td><td class="l{{if .LN}} has{{end}}">{{.L}}</td><td class="ln">{{if .RN}}{{.RN}}{{end}}</td><td class="r{{if .RN}} has{{end}}">{{.R}}</td></tr>{{end}}
+        {{end}}
+      </table></div>
+      {{end}}
+    </section>
+    {{end}}{{end}}
+    {{if eq .D.Changed 0}}<p class="lead">两个版本的文件内容完全相同。</p>{{end}}
+    {{end}}
+  {{end}}
+</main>
+</body>
+</html>{{end}}

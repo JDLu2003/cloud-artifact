@@ -1,0 +1,118 @@
+{{define "markdown.tmpl"}}<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>{{.Title}}</title>
+<style>
+/* Markdown 阅读主题：单栏正文约 38 个汉字宽，宽屏时目录放在右侧。 */
+:root {
+  --bg: #fbfbfa;
+  --fg: #22252b;
+  --muted: #646b77;
+  --faint: #959ba6;
+  --line: #e2e4e8;
+  --code-bg: #f1f2f4;
+  --accent: #2f45a3;
+  --mark: #fff1b8;
+  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", "Source Han Sans SC", sans-serif;
+  --mono: ui-monospace, SFMono-Regular, "JetBrains Mono", Menlo, Consolas, monospace;
+  --measure: 38em;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) { --bg: #16181c; --fg: #e3e5ea; --muted: #a2a8b3; --faint: #7a808b; --line: #2c3038; --code-bg: #20232a; --accent: #9cabff; --mark: #5a4a12; color-scheme: dark; }
+}
+:root[data-theme="dark"] { --bg: #16181c; --fg: #e3e5ea; --muted: #a2a8b3; --faint: #7a808b; --line: #2c3038; --code-bg: #20232a; --accent: #9cabff; --mark: #5a4a12; color-scheme: dark; }
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.8 var(--font); -webkit-font-smoothing: antialiased; }
+.layout {
+  display: grid; grid-template-columns: minmax(0, var(--measure)); justify-content: center; gap: 56px;
+  padding-block: 48px 96px;
+  padding-left: max(20px, env(safe-area-inset-left, 0px));
+  padding-right: max(20px, env(safe-area-inset-right, 0px));
+}
+@media (min-width: 1180px) { .layout.has-toc { grid-template-columns: minmax(0, var(--measure)) 220px; } }
+.doc { min-width: 0; }
+.doc > :first-child { margin-top: 0; }
+h1, h2, h3, h4 { line-height: 1.4; font-weight: 650; text-wrap: balance; scroll-margin-top: 24px; }
+h1 { font-size: 30px; margin: 0 0 24px; letter-spacing: 0.01em; }
+h2 { font-size: 22px; margin: 2.2em 0 0.7em; }
+h3 { font-size: 18px; margin: 1.8em 0 0.6em; }
+h4 { font-size: 16px; margin: 1.6em 0 0.5em; }
+p { margin: 0 0 1.05em; }
+a { color: var(--accent); text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 3px; }
+a:hover { text-decoration-thickness: 2px; }
+strong { font-weight: 650; }
+em { font-style: normal; text-emphasis: filled dot; text-emphasis-position: under right; }
+:lang(en) em, em:lang(en) { font-style: italic; text-emphasis: none; }
+mark { background: var(--mark); color: inherit; padding: 0 2px; border-radius: 2px; }
+ul, ol { padding-left: 1.6em; margin: 0 0 1.05em; }
+li { margin: 0.25em 0; }
+li > p { margin: 0 0 0.4em; }
+li.task-list-item, li:has(> input[type=checkbox]) { list-style: none; margin-left: -1.4em; }
+input[type=checkbox] { margin: 0 0.5em 0 0; vertical-align: -1px; }
+blockquote { margin: 1.4em 0; padding: 0.2em 0 0.2em 1.1em; border-left: 3px solid var(--line); color: var(--muted); }
+blockquote > :last-child { margin-bottom: 0; }
+hr { border: 0; border-top: 1px solid var(--line); margin: 2.4em 0; }
+code { font-family: var(--mono); font-size: 0.88em; background: var(--code-bg); padding: 0.12em 0.36em; border-radius: 4px; }
+pre { background: var(--code-bg); border-radius: 8px; padding: 14px 16px; overflow-x: auto; line-height: 1.6; margin: 1.4em 0; }
+pre code { background: none; padding: 0; font-size: 13.5px; }
+pre code.hljs { background: none; padding: 0; }
+pre.mermaid { background: none; text-align: center; padding: 0; }
+img, svg, video { max-width: 100%; height: auto; }
+img { display: block; margin: 1.6em auto; border-radius: 6px; }
+p > img:only-child { margin: 1.6em auto 0.4em; }
+p:has(> img:only-child) + p > em:only-child { display: block; text-align: center; color: var(--muted); font-size: 14px; text-emphasis: none; }
+.table-wrap { overflow-x: auto; margin: 1.4em 0; }
+table { border-collapse: collapse; width: 100%; font-size: 14.5px; line-height: 1.6; font-variant-numeric: tabular-nums; }
+th, td { padding: 8px 12px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+th { font-weight: 600; border-bottom-width: 2px; white-space: nowrap; }
+dl dt { font-weight: 600; margin-top: 0.8em; }
+dl dd { margin: 0.2em 0 0 1.4em; }
+.footnotes { margin-top: 3em; font-size: 14px; color: var(--muted); }
+.footnotes hr { margin: 0 0 1em; }
+.math-display { overflow-x: auto; margin: 1.4em 0; text-align: center; }
+.doc-foot { margin-top: 4em; padding-top: 1em; border-top: 1px solid var(--line); color: var(--faint); font-size: 13px; }
+.toc { display: none; }
+@media (min-width: 1180px) {
+  .toc { display: block; position: sticky; top: 40px; align-self: start; font-size: 13.5px; line-height: 1.5; max-height: calc(100vh - 80px); overflow: auto; }
+  .toc p { margin: 0 0 10px; color: var(--muted); font-weight: 600; }
+  .toc ol { list-style: none; margin: 0; padding: 0; }
+  .toc li { margin: 0; }
+  .toc li.l3 { padding-left: 12px; }
+  .toc a { display: block; padding: 4px 0 4px 10px; color: var(--muted); text-decoration: none; border-left: 1px solid var(--line); }
+  .toc a:hover, .toc a.on { color: var(--fg); border-left-color: var(--fg); }
+}
+@media (max-width: 600px) { body { font-size: 15.5px; } h1 { font-size: 25px; } h2 { font-size: 20px; } .layout { padding-block: 28px 64px; } }
+@media print { .toc { display: none; } .layout { display: block; padding: 0; } }
+</style>
+{{if .HasCode}}<link rel="stylesheet" href="/_lib/highlight/styles/github.min.css" media="(prefers-color-scheme: light)"><link rel="stylesheet" href="/_lib/highlight/styles/github-dark.min.css" media="(prefers-color-scheme: dark)">{{end}}
+{{if .HasMath}}<link rel="stylesheet" href="/_lib/katex/katex.min.css">{{end}}
+</head>
+<body>
+<div class="layout{{if .TOC}} has-toc{{end}}">
+  <article class="doc">
+{{.Body}}
+    <footer class="doc-foot">{{.Owner}}，更新于 {{.Updated}}</footer>
+  </article>
+  {{if .TOC}}<nav class="toc" aria-label="目录"><p>目录</p><ol>{{range .TOC}}<li class="l{{.Level}}"><a href="#{{.ID}}">{{.Text}}</a></li>{{end}}</ol></nav>{{end}}
+</div>
+<script>
+// 表格放进可横向滚动的容器，避免窄屏撑破页面
+document.querySelectorAll('.doc > table').forEach(function (t) {
+  var w = document.createElement('div'); w.className = 'table-wrap';
+  t.parentNode.insertBefore(w, t); w.appendChild(t);
+});
+</script>
+{{if .HasCode}}<script src="/_lib/highlight/highlight.min.js"></script><script>try { hljs.highlightAll(); } catch (e) {}</script>{{end}}
+{{if .HasMermaid}}<script src="/_lib/mermaid/mermaid.min.js"></script><script>try { mermaid.initialize({ startOnLoad: true, securityLevel: 'strict', theme: matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'neutral', fontFamily: 'inherit' }); } catch (e) {}</script>{{end}}
+{{if .HasMath}}<script src="/_lib/katex/katex.min.js"></script><script src="/_lib/katex/auto-render.min.js"></script><script>
+try {
+  document.querySelectorAll('.math-display').forEach(function (el) { katex.render(el.textContent, el, { displayMode: true, throwOnError: false }); });
+  renderMathInElement(document.querySelector('.doc'), { delimiters: [{ left: '$$', right: '$$', display: true }], throwOnError: false });
+} catch (e) {}
+</script>{{end}}
+</body>
+</html>{{end}}

@@ -1,0 +1,281 @@
+<!-- TEMPLATE-SAMPLE：这是模板里的示例内容。替换成真实内容后删除这一行，否则检查会报错。 -->
+<title>缓存集群迁移复盘</title>
+<meta name="description" content="会话缓存迁移到 Redis 集群后的效果与待决定事项">
+<style>
+/* 版式：1280×720 固定画布，等比缩放；封面和结尾用深色，内容页用浅色。 */
+:root {
+  --ink: #15201f;        /* 正文 */
+  --paper: #ffffff;      /* 内容页背景 */
+  --deep: #0f2b2a;       /* 封面、结尾背景 */
+  --muted: #5d6968;      /* 次要文字 */
+  --line: #dfe5e4;       /* 分隔、网格 */
+  --panel: #f1f5f4;      /* 图表底板 */
+  --accent: #1d7a5f;     /* 强调：只给要突出的那一个东西 */
+  --on-deep: #e9f1ef;
+  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color-scheme: light;
+}
+/* 幻灯片是投影用的固定视觉，只做一套配色，因此明确写死背景色。 */
+html, body { height: 100%; margin: 0; background: #0b0d0d; overflow: hidden; }
+body { font-family: var(--font); color: var(--ink); -webkit-font-smoothing: antialiased; }
+
+/* ---- 运行时样式（一般不需要改） ---- */
+.deck { position: fixed; inset: 0; }
+.stage { position: absolute; left: 50%; top: 50%; width: 1280px; height: 720px; transform-origin: 0 0; }
+.slide { position: absolute; inset: 0; width: 1280px; height: 720px; box-sizing: border-box; padding: 72px 88px;
+  background: var(--paper); overflow: hidden; display: none; flex-direction: column; }
+.slide.on { display: flex; }
+.chrome { position: fixed; left: 0; right: 0; bottom: 0; height: 3px; background: rgba(255,255,255,.08); z-index: 5; }
+.chrome i { display: block; height: 100%; background: var(--accent); width: 0; transition: width .2s; }
+.pageno { position: fixed; right: max(14px, env(safe-area-inset-right, 0px)); bottom: 10px; color: rgba(255,255,255,.5); font: 12px/1 var(--mono); z-index: 5; }
+.notes-panel { position: fixed; left: 0; right: 0; bottom: 0; max-height: 40%; overflow: auto; background: rgba(12,14,14,.94); color: #e8ecec;
+  padding: 16px max(20px, env(safe-area-inset-left, 0px)); font-size: 16px; line-height: 1.7; z-index: 6; }
+.slide aside.notes { display: none; }
+.deck.overview { overflow: auto; position: fixed; inset: 0; }
+.deck.overview .stage { position: static; transform: none !important; width: auto; height: auto; display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(256px, 1fr)); gap: 20px; padding: 24px; }
+.deck.overview .thumb { position: relative; aspect-ratio: 16 / 9; overflow: hidden; border-radius: 6px; cursor: pointer; outline: 2px solid transparent; }
+.deck.overview .thumb.cur { outline-color: var(--accent); }
+.deck.overview .thumb .slide { display: flex; transform-origin: 0 0; }
+.hint { position: fixed; left: 50%; top: 16px; transform: translateX(-50%); background: rgba(12,14,14,.85); color: #fff; font-size: 13px;
+  padding: 6px 12px; border-radius: 6px; z-index: 7; transition: opacity .4s; }
+@media print {
+  @page { size: 1280px 720px; margin: 0; }
+  html, body { overflow: visible; background: none; height: auto; }
+  .deck, .stage { position: static; transform: none !important; }
+  .slide { display: flex !important; position: relative; page-break-after: always; break-after: page; }
+  .chrome, .pageno, .notes-panel, .hint { display: none !important; }
+}
+@media (prefers-reduced-motion: reduce) { .chrome i { transition: none; } }
+
+/* ---- 内容样式（按主题修改） ---- */
+.slide h1 { font-size: 64px; line-height: 1.2; margin: 0; font-weight: 700; letter-spacing: .01em; text-wrap: balance; }
+.slide h2 { font-size: 42px; line-height: 1.3; margin: 0 0 40px; font-weight: 650; text-wrap: balance; max-width: 1040px; }
+.slide p, .slide li { font-size: 26px; line-height: 1.6; margin: 0; }
+.slide ul { margin: 0; padding-left: 1.2em; display: grid; gap: 18px; }
+.slide .muted { color: var(--muted); }
+.slide .caption { font-size: 17px; color: var(--muted); margin-top: 14px; }
+.slide .num { font-variant-numeric: tabular-nums; }
+
+.slide.dark { background: var(--deep); color: var(--on-deep); }
+.slide.dark .muted, .slide.dark .caption { color: #9fb5b1; }
+
+.cover { justify-content: flex-end; }
+.cover .who { margin-top: 28px; font-size: 22px; display: flex; gap: 28px; }
+
+.split { display: grid; grid-template-columns: 400px 1fr; gap: 56px; flex: 1; min-height: 0; align-items: center; }
+.panel { background: var(--panel); border-radius: 14px; padding: 28px; height: 100%; box-sizing: border-box; display: flex; flex-direction: column; min-height: 0; }
+.panel .chart { position: relative; flex: 1; min-height: 0; }
+
+.stat { justify-content: center; }
+.stat .big { font-size: 150px; font-weight: 700; line-height: 1; color: var(--accent); font-variant-numeric: tabular-nums; letter-spacing: -.02em; }
+.stat .big small { font-size: 56px; font-weight: 600; }
+.stat p { max-width: 820px; margin-top: 28px; }
+
+.compare { display: grid; grid-template-columns: 1fr 1fr; gap: 32px; flex: 1; }
+.compare section { border: 1.5px solid var(--line); border-radius: 14px; padding: 28px 32px; }
+.compare section.pick { border-color: var(--accent); }
+.compare h3 { font-size: 26px; margin: 0 0 18px; display: flex; justify-content: space-between; align-items: baseline; }
+.compare h3 span { font-size: 16px; color: var(--accent); font-weight: 600; }
+.compare dl { margin: 0; display: grid; grid-template-columns: 120px 1fr; row-gap: 14px; font-size: 22px; }
+.compare dt { color: var(--muted); }
+.compare dd { margin: 0; }
+
+.full { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; }
+.full svg { width: 100%; height: 100%; color: var(--ink); }
+
+.asks { display: grid; gap: 22px; margin-top: 8px; }
+.asks div { display: grid; grid-template-columns: 56px 1fr; gap: 20px; align-items: start; font-size: 26px; line-height: 1.5; }
+.asks b { width: 44px; height: 44px; border-radius: 50%; border: 1.5px solid #9fb5b1; display: grid; place-items: center; font-size: 20px; font-weight: 600; }
+</style>
+
+<div class="deck" id="deck">
+  <div class="stage" id="stage">
+
+    <section class="slide dark cover">
+      <h1>会话缓存迁移到 Redis 集群以后</h1>
+      <div class="who muted"><span>基础架构组 林栩</span><span>2026 年 10 月 16 日</span></div>
+      <aside class="notes">开场一句话：迁移已完成，今天要大家决定两件事。</aside>
+    </section>
+
+    <section class="slide">
+      <h2>迁移后，高峰期登录延迟从 1.8 秒降到 0.3 秒以下</h2>
+      <div class="split">
+        <div>
+          <p>9 月 12 日切换完成。</p>
+          <p class="muted" style="margin-top:20px">此前每天 20:00 前后，单机 Redis 的 CPU 打满，登录接口排队。</p>
+        </div>
+        <div class="panel">
+          <div class="chart"><canvas id="c1" role="img" aria-label="9 月 8 日至 14 日每日 P99 延迟，12 日后降到 300 毫秒以下"></canvas></div>
+          <p class="caption">登录接口每日 P99 延迟（毫秒），来源：APM</p>
+        </div>
+      </div>
+      <aside class="notes">强调 12 日这个拐点；其余几天的波动来自活动流量。</aside>
+    </section>
+
+    <section class="slide stat">
+      <div class="big num">0 <small>次</small></div>
+      <p>第三季度因缓存宕机导致的登录失败。第二季度是 4 次，合计影响约 3.1 万次登录。</p>
+    </section>
+
+    <section class="slide">
+      <h2>报表服务是否也接入新集群：建议接入</h2>
+      <div class="compare">
+        <section class="pick">
+          <h3>接入新集群 <span>建议</span></h3>
+          <dl><dt>工作量</dt><dd>约 3 人日</dd><dt>收益</dt><dd>报表查询不再拖慢登录</dd><dt>风险</dt><dd>需要调整两处键名前缀</dd></dl>
+        </section>
+        <section>
+          <h3>保持现状</h3>
+          <dl><dt>工作量</dt><dd>无</dd><dt>收益</dt><dd>无改动风险</dd><dt>风险</dt><dd>旧集群仍需维护到明年 3 月</dd></dl>
+        </section>
+      </div>
+    </section>
+
+    <section class="slide">
+      <h2>请求先查集群，未命中时才回源数据库</h2>
+      <div class="full">
+        <svg viewBox="0 0 1100 360" role="img" aria-label="应用服务查询 Redis 集群三个分片，未命中时回源 PostgreSQL 并回填">
+          <defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="currentColor"/></marker></defs>
+          <g fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="20" y="140" width="200" height="80" rx="10"/>
+            <rect x="420" y="40" width="240" height="280" rx="14" style="stroke: var(--accent)"/>
+            <rect x="450" y="80" width="180" height="56" rx="8"/><rect x="450" y="152" width="180" height="56" rx="8"/><rect x="450" y="224" width="180" height="56" rx="8"/>
+            <rect x="860" y="140" width="220" height="80" rx="10"/>
+            <path d="M220 180H410" marker-end="url(#a)"/>
+            <path d="M670 180H850" marker-end="url(#a)" stroke-dasharray="7 6"/>
+          </g>
+          <g fill="currentColor" font-size="22" text-anchor="middle">
+            <text x="120" y="188">应用服务</text>
+            <text x="540" y="116">分片 1</text><text x="540" y="188">分片 2</text><text x="540" y="260">分片 3</text>
+            <text x="970" y="188">PostgreSQL</text>
+            <text x="315" y="165" font-size="18">按键哈希查询</text>
+            <text x="760" y="165" font-size="18">未命中时回源</text>
+            <text x="540" y="350" font-size="18" style="fill: var(--accent)">Redis 集群</text>
+          </g>
+        </svg>
+      </div>
+    </section>
+
+    <section class="slide dark">
+      <h2>需要今天决定的两件事</h2>
+      <div class="asks">
+        <div><b>1</b><span>报表服务是否接入新集群（约 3 人日，建议接入）</span></div>
+        <div><b>2</b><span>登录延迟告警阈值是否从 500 毫秒收紧到 300 毫秒</span></div>
+      </div>
+      <p class="muted" style="margin-top:48px;font-size:22px">旧集群将在 11 月 15 日下线。</p>
+    </section>
+
+  </div>
+</div>
+<div class="chrome"><i id="bar"></i></div>
+<div class="pageno" id="pageno"></div>
+
+<script src="/_lib/chartjs/chart.umd.js"></script>
+<script>
+/* ---- 图表（按内容修改） ---- */
+(function () {
+  if (!window.Chart) return;
+  var css = getComputedStyle(document.documentElement);
+  var v = function (n) { return css.getPropertyValue(n).trim(); };
+  Chart.defaults.font.family = v('--font');
+  Chart.defaults.font.size = 16;
+  Chart.defaults.color = v('--muted');
+  Chart.defaults.borderColor = v('--line');
+  new Chart(document.getElementById('c1'), {
+    type: 'line',
+    data: {
+      labels: ['9/8', '9/9', '9/10', '9/11', '9/12', '9/13', '9/14'],
+      datasets: [{ data: [1820, 1760, 1905, 1690, 410, 280, 265], borderColor: v('--accent'), backgroundColor: v('--accent'), borderWidth: 3, pointRadius: 4, tension: 0.2 }]
+    },
+    options: { maintainAspectRatio: false, animation: false, plugins: { legend: { display: false } },
+      scales: { y: { beginAtZero: true, ticks: { callback: function (x) { return x + ' ms'; } } }, x: { grid: { display: false } } } }
+  });
+})();
+</script>
+
+<script>
+/* ---- 幻灯片运行时（一般不需要改） ---- */
+(function () {
+  var deck = document.getElementById('deck'), stage = document.getElementById('stage');
+  var slides = Array.prototype.slice.call(stage.querySelectorAll(':scope > .slide'));
+  var bar = document.getElementById('bar'), pageno = document.getElementById('pageno');
+  var cur = 0, notesEl = null, overview = false;
+  var W = 1280, H = 720;
+
+  function fit() {
+    if (overview) return;
+    var s = Math.min(window.innerWidth / W, window.innerHeight / H);
+    stage.style.transform = 'translate(' + (-W * s / 2) + 'px,' + (-H * s / 2) + 'px) scale(' + s + ')';
+  }
+  function show(i, push) {
+    cur = Math.max(0, Math.min(slides.length - 1, i));
+    slides.forEach(function (el, k) { el.classList.toggle('on', k === cur); });
+    bar.style.width = ((cur + 1) / slides.length * 100) + '%';
+    pageno.textContent = (cur + 1) + ' / ' + slides.length;
+    if (notesEl) renderNotes();
+    if (push !== false) { try { history.replaceState(null, '', '#' + (cur + 1)); } catch (e) {} }
+  }
+  function renderNotes() {
+    var n = slides[cur].querySelector('aside.notes');
+    notesEl.textContent = n ? n.textContent.trim() : '这一页没有备注。';
+  }
+  function toggleNotes() {
+    if (notesEl) { notesEl.remove(); notesEl = null; return; }
+    notesEl = document.createElement('div'); notesEl.className = 'notes-panel'; document.body.appendChild(notesEl); renderNotes();
+  }
+  function toggleOverview() {
+    overview = !overview;
+    deck.classList.toggle('overview', overview);
+    if (overview) {
+      stage.style.transform = '';
+      slides.forEach(function (el, k) {
+        var t = document.createElement('div'); t.className = 'thumb' + (k === cur ? ' cur' : '');
+        el.parentNode.insertBefore(t, el); t.appendChild(el);
+        var s = t.clientWidth / W; el.style.transform = 'scale(' + s + ')';
+        t.addEventListener('click', function () { cur = k; toggleOverview(); });
+      });
+      var c = stage.querySelector('.thumb.cur'); if (c) c.scrollIntoView({ block: 'center' });
+    } else {
+      stage.querySelectorAll('.thumb').forEach(function (t) { var el = t.firstChild; el.style.transform = ''; stage.insertBefore(el, t); t.remove(); });
+      fit(); show(cur);
+    }
+  }
+  function fullscreen() {
+    try {
+      if (document.fullscreenElement) document.exitFullscreen();
+      else document.documentElement.requestFullscreen().catch(function () {});
+    } catch (e) {}
+  }
+  document.addEventListener('keydown', function (e) {
+    if (e.target.closest && e.target.closest('input, textarea, select, [contenteditable]')) return;
+    var k = e.key;
+    if (overview && k !== 'o' && k !== 'O' && k !== 'Escape') return;
+    if (k === 'ArrowRight' || k === 'PageDown' || k === ' ' || k === 'Enter') { show(cur + 1); e.preventDefault(); }
+    else if (k === 'ArrowLeft' || k === 'PageUp' || k === 'Backspace') { show(cur - 1); e.preventDefault(); }
+    else if (k === 'Home') show(0);
+    else if (k === 'End') show(slides.length - 1);
+    else if (k === 'f' || k === 'F') fullscreen();
+    else if (k === 'o' || k === 'O' || (k === 'Escape' && overview)) toggleOverview();
+    else if (k === 'n' || k === 'N') toggleNotes();
+  });
+  var x0 = null;
+  deck.addEventListener('touchstart', function (e) { x0 = e.touches[0].clientX; }, { passive: true });
+  deck.addEventListener('touchend', function (e) {
+    if (x0 === null || overview) return;
+    var dx = e.changedTouches[0].clientX - x0; x0 = null;
+    if (Math.abs(dx) > 40) show(cur + (dx < 0 ? 1 : -1));
+  });
+  deck.addEventListener('click', function (e) {
+    if (overview || e.target.closest('a, button, input, select, canvas, [data-no-nav]')) return;
+    show(cur + (e.clientX > window.innerWidth / 2 ? 1 : -1));
+  });
+  window.addEventListener('resize', fit);
+  window.addEventListener('hashchange', function () { var n = parseInt(location.hash.slice(1), 10); if (n) show(n - 1, false); });
+  fit();
+  show((parseInt(location.hash.slice(1), 10) || 1) - 1, false);
+  var hint = document.createElement('div'); hint.className = 'hint'; hint.textContent = '←/→ 翻页　F 全屏　O 总览　N 备注';
+  document.body.appendChild(hint); setTimeout(function () { hint.style.opacity = '0'; }, 2600); setTimeout(function () { hint.remove(); }, 3200);
+})();
+</script>

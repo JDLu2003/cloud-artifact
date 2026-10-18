@@ -1,0 +1,14 @@
+{{define "head"}}<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="referrer" content="same-origin">
+<title>{{.}}</title>
+<link rel="icon" href="/_viewer/mark.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/_viewer/viewer.css">
+{{end}}
+
+{{define "mark"}}<a class="mark" href="/" aria-label="Artifact 首页"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" aria-hidden="true"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/><path d="M9 12h6M9 15.5h6M9 19h3.5"/></svg></a>{{end}}
+
+{{define "userlink"}}{{if .}}<a class="btn" href="/admin/">后台</a>{{else}}<a class="btn" href="/admin/#/login">登录</a>{{end}}{{end}}

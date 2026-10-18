@@ -1,0 +1,194 @@
+<!-- TEMPLATE-SAMPLE：这是模板里的示例内容。替换成真实内容后删除这一行，否则检查会报错。 -->
+<title>会话缓存迁移复盘</title>
+<meta name="description" content="第三季度把会话缓存迁到 Redis 集群的过程、效果与待决定事项">
+<style>
+/* 版式：宽屏左侧窄目录 + 单栏正文（约 38 个汉字宽），图表与正文同宽；窄屏目录隐藏。 */
+:root {
+  --bg: #fbfbfa;
+  --surface: #ffffff;
+  --fg: #1e2226;
+  --muted: #5f666e;
+  --faint: #8e959c;
+  --line: #e1e4e7;
+  --accent: #1f6a5a;       /* 按主题修改：只给链接、当前目录项、图里要突出的那条线 */
+  --accent-soft: #e5f0ec;
+  --warn-bg: #fdf4e3; --warn-fg: #7a4f00;
+  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", "Source Han Sans SC", sans-serif;
+  --serif: "Songti SC", "STSong", "Noto Serif CJK SC", "Source Han Serif SC", "SimSun", serif;
+  --mono: ui-monospace, SFMono-Regular, "JetBrains Mono", Menlo, Consolas, monospace;
+  --measure: 38em;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) { --bg: #161819; --surface: #1d2021; --fg: #e4e6e7; --muted: #a3a9ae; --faint: #7b8288; --line: #2d3133; --accent: #7cc7b2; --accent-soft: #1f3530; --warn-bg: #352a14; --warn-fg: #f0cc85; color-scheme: dark; }
+}
+:root[data-theme="dark"] { --bg: #161819; --surface: #1d2021; --fg: #e4e6e7; --muted: #a3a9ae; --faint: #7b8288; --line: #2d3133; --accent: #7cc7b2; --accent-soft: #1f3530; --warn-bg: #352a14; --warn-fg: #f0cc85; color-scheme: dark; }
+
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 16.5px/1.8 var(--sans); -webkit-font-smoothing: antialiased; }
+.wrap {
+  display: grid; grid-template-columns: minmax(0, var(--measure)); justify-content: center; gap: 64px;
+  padding-block: 56px 96px;
+  padding-left: max(20px, env(safe-area-inset-left, 0px));
+  padding-right: max(20px, env(safe-area-inset-right, 0px));
+}
+@media (min-width: 1160px) { .wrap { grid-template-columns: 200px minmax(0, var(--measure)); justify-content: center; } }
+
+/* 目录 */
+.toc { display: none; }
+@media (min-width: 1160px) {
+  .toc { display: block; position: sticky; top: 48px; align-self: start; font-size: 13.5px; line-height: 1.5; }
+  .toc ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+  .toc a { display: block; padding: 5px 0 5px 12px; border-left: 2px solid var(--line); color: var(--muted); text-decoration: none; }
+  .toc a:hover { color: var(--fg); }
+  .toc a.on { color: var(--accent); border-left-color: var(--accent); }
+}
+
+/* 正文 */
+article { min-width: 0; }
+header.doc-head { margin-bottom: 40px; }
+h1 { font-family: var(--serif); font-size: 34px; line-height: 1.35; font-weight: 700; margin: 0 0 20px; text-wrap: balance; }
+.lead { font-size: 18.5px; line-height: 1.8; margin: 0 0 20px; }
+.meta { display: flex; flex-wrap: wrap; gap: 4px 20px; color: var(--faint); font-size: 14px; }
+h2 { font-size: 23px; line-height: 1.4; margin: 2.4em 0 0.8em; font-weight: 650; text-wrap: balance; scroll-margin-top: 24px; }
+h3 { font-size: 18px; margin: 1.8em 0 0.6em; font-weight: 650; }
+p { margin: 0 0 1em; }
+a { color: var(--accent); text-underline-offset: 3px; }
+strong { font-weight: 650; }
+ul, ol { padding-left: 1.5em; margin: 0 0 1em; }
+li { margin: 0.3em 0; }
+code { font-family: var(--mono); font-size: 0.88em; background: var(--accent-soft); padding: 0.1em 0.35em; border-radius: 4px; }
+.num { font-variant-numeric: tabular-nums; }
+
+figure { margin: 2em 0; }
+figure svg { display: block; width: 100%; height: auto; color: var(--fg); }
+figcaption { margin-top: 10px; color: var(--muted); font-size: 14.5px; line-height: 1.6; }
+.chart { position: relative; height: 300px; }
+
+.table-wrap { overflow-x: auto; margin: 1.6em 0; }
+table { width: 100%; border-collapse: collapse; font-size: 15px; line-height: 1.6; }
+th, td { padding: 9px 12px; text-align: left; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font-weight: 600; border-bottom: 2px solid var(--line); white-space: nowrap; }
+td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; }
+
+.note { background: var(--warn-bg); color: var(--warn-fg); border-radius: 8px; padding: 14px 18px; margin: 1.6em 0; font-size: 15.5px; }
+.note p:last-child { margin: 0; }
+
+.sources { margin-top: 3em; padding-top: 1.2em; border-top: 1px solid var(--line); font-size: 14px; color: var(--muted); }
+.sources ol { padding-left: 1.4em; }
+
+@media (max-width: 600px) { body { font-size: 16px; } h1 { font-size: 27px; } .lead { font-size: 17px; } .wrap { padding-block: 32px 64px; } }
+@media print { .toc { display: none; } .wrap { display: block; padding: 0; } }
+</style>
+
+<div class="wrap">
+  <nav class="toc" aria-label="目录"><ol id="toc"></ol></nav>
+
+  <article>
+    <header class="doc-head">
+      <h1>会话缓存迁移复盘</h1>
+      <p class="lead">第三季度，我们把会话缓存从单机 Redis 迁到了三节点集群。迁移后，高峰期登录接口的 P99 延迟从 1.8 秒降到 240 毫秒，全季度没有再出现因缓存宕机导致的登录失败。还有两件事需要在 10 月底前决定，见最后一节。</p>
+      <div class="meta"><span>基础架构组 林栩</span><span>2026 年 10 月 16 日</span></div>
+    </header>
+
+    <h2 id="why">为什么要迁移</h2>
+    <p>第二季度发生了 4 次登录失败事故，原因都是单机 Redis 在晚高峰 CPU 打满后无响应，合计影响约 3.1 万次登录。单机已经是最高配置，无法继续垂直扩容。</p>
+
+    <h2 id="how">新架构怎么工作</h2>
+    <p>应用服务按会话 ID 的哈希值把请求分到三个分片之一。分片未命中时回源 PostgreSQL，读到的结果写回对应分片。任何一个分片宕机，只影响约三分之一的会话，并会自动切换到它的副本。</p>
+    <figure>
+      <svg viewBox="0 0 680 220" role="img" aria-label="应用服务按会话哈希访问三个分片，未命中时回源 PostgreSQL">
+        <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="currentColor"/></marker></defs>
+        <g fill="none" stroke="currentColor" stroke-width="1.5">
+          <rect x="10" y="82" width="120" height="56" rx="8"/>
+          <rect x="260" y="10" width="160" height="200" rx="12" style="stroke: var(--accent)"/>
+          <rect x="280" y="34" width="120" height="40" rx="6"/><rect x="280" y="90" width="120" height="40" rx="6"/><rect x="280" y="146" width="120" height="40" rx="6"/>
+          <rect x="540" y="82" width="130" height="56" rx="8"/>
+          <path d="M130 110H254" marker-end="url(#arr)"/>
+          <path d="M420 110H534" marker-end="url(#arr)" stroke-dasharray="5 4"/>
+        </g>
+        <g fill="currentColor" font-size="14" text-anchor="middle">
+          <text x="70" y="115">应用服务</text>
+          <text x="340" y="59">分片 1</text><text x="340" y="115">分片 2</text><text x="340" y="171">分片 3</text>
+          <text x="605" y="115">PostgreSQL</text>
+          <text x="192" y="100" font-size="12">按会话哈希</text>
+          <text x="477" y="100" font-size="12">未命中时回源</text>
+        </g>
+      </svg>
+      <figcaption>图 1：每个会话固定落在一个分片上；只有未命中时才访问数据库。</figcaption>
+    </figure>
+
+    <h2 id="result">效果</h2>
+    <p>9 月 12 日切换完成。此前一周，登录接口每天的 P99 延迟都在 1.7 秒以上；切换后稳定在 300 毫秒以下。</p>
+    <figure>
+      <div class="chart"><canvas id="latency" role="img" aria-label="9 月 8 日至 14 日每日 P99 延迟，12 日之后降到 300 毫秒以下"></canvas></div>
+      <figcaption>图 2：登录接口每日 P99 延迟（毫秒）。数据来源：APM，按天取最大值。</figcaption>
+    </figure>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>指标</th><th class="n">第二季度</th><th class="n">第三季度</th></tr></thead>
+        <tbody>
+          <tr><td>缓存导致的登录失败</td><td class="n">4 次</td><td class="n">0 次</td></tr>
+          <tr><td>高峰期 P99 延迟</td><td class="n">1.8 秒</td><td class="n">0.24 秒</td></tr>
+          <tr><td>缓存月成本</td><td class="n">2400 元</td><td class="n">3100 元</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>成本每月增加 700 元，来自两台新增节点。</p>
+
+    <div class="note"><p>旧的单机实例将在 11 月 15 日下线。仍直接连接旧实例的服务需要在此之前切换，名单见附件。</p></div>
+
+    <h2 id="decide">需要决定的事</h2>
+    <ol>
+      <li>报表服务是否也接入新集群。估计 3 人日，接入后报表查询不再与登录争抢缓存。建议接入。</li>
+      <li>登录延迟告警阈值是否从 500 毫秒收紧到 300 毫秒。收紧后，按过去 30 天的数据会多触发 2 次告警。</li>
+    </ol>
+
+    <section class="sources">
+      <p>数据来源</p>
+      <ol>
+        <li>APM 登录接口面板，2026-07-01 至 2026-09-30</li>
+        <li>第二季度事故记录 INC-2041、INC-2077、INC-2093、INC-2110</li>
+      </ol>
+    </section>
+  </article>
+</div>
+
+<script src="/_lib/chartjs/chart.umd.js"></script>
+<script>
+// 图表颜色从 CSS 变量读取，明暗主题都清楚
+(function () {
+  if (!window.Chart) return;
+  var css = getComputedStyle(document.documentElement);
+  var v = function (n) { return css.getPropertyValue(n).trim(); };
+  Chart.defaults.color = v('--muted');
+  Chart.defaults.borderColor = v('--line');
+  Chart.defaults.font.family = v('--sans');
+  new Chart(document.getElementById('latency'), {
+    type: 'line',
+    data: { labels: ['9/8', '9/9', '9/10', '9/11', '9/12', '9/13', '9/14'],
+      datasets: [{ data: [1820, 1760, 1905, 1690, 410, 280, 265], borderColor: v('--accent'), backgroundColor: v('--accent'), borderWidth: 2, pointRadius: 3, tension: 0.2 }] },
+    options: { maintainAspectRatio: false, plugins: { legend: { display: false } },
+      scales: { y: { beginAtZero: true, ticks: { callback: function (x) { return x + ' ms'; } } }, x: { grid: { display: false } } } }
+  });
+})();
+
+// 由二级标题生成目录，并高亮当前阅读的位置
+(function () {
+  var toc = document.getElementById('toc');
+  var hs = Array.prototype.slice.call(document.querySelectorAll('article h2'));
+  if (hs.length < 3) { toc.parentNode.remove(); document.querySelector('.wrap').style.gridTemplateColumns = 'minmax(0, var(--measure))'; return; }
+  hs.forEach(function (h, i) {
+    if (!h.id) h.id = 's' + (i + 1);
+    var li = document.createElement('li'), a = document.createElement('a');
+    a.href = '#' + h.id; a.textContent = h.textContent; li.appendChild(a); toc.appendChild(li);
+  });
+  var links = toc.querySelectorAll('a');
+  function onScroll() {
+    var idx = 0;
+    hs.forEach(function (h, i) { if (h.getBoundingClientRect().top < 120) idx = i; });
+    links.forEach(function (a, i) { a.classList.toggle('on', i === idx); });
+  }
+  window.addEventListener('scroll', onScroll, { passive: true }); onScroll();
+})();
+</script>

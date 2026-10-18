@@ -1,0 +1,10 @@
+{{define "message.tmpl"}}{{template "head" .Title}}</head>
+<body>
+<header class="bar">{{template "mark"}}<div class="bar-title"><h1>Artifact</h1></div></header>
+<main class="page narrow msg">
+  <h2>{{.Heading}}</h2>
+  <p class="lead">{{.Body}}</p>
+  <p><a class="btn outline" href="{{.Link}}">{{.LinkText}}</a></p>
+</main>
+</body>
+</html>{{end}}

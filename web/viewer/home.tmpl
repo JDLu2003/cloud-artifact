@@ -1,0 +1,33 @@
+{{define "home.tmpl"}}{{template "head" "Artifact"}}</head>
+<body>
+<header class="bar">
+  {{template "mark"}}
+  <div class="bar-title"><h1>Artifact</h1></div>
+  <nav class="bar-actions">{{template "userlink" .User}}</nav>
+</header>
+<main class="page narrow">
+  <section class="home-hero">
+    <h2>让 agent 把做好的页面发成链接</h2>
+    <p class="lead">agent 写好网页、文档、报告或幻灯片后，通过这里发布，你在浏览器里打开链接查看。每次修改都会保留版本，可以对比，也可以恢复。</p>
+  </section>
+
+  <h3 class="section-title">接入一个 agent</h3>
+  <ol class="steps">
+    <li><p>{{if .User}}在<a href="/admin/#/keys">后台的「密钥」页</a>{{else}}<a href="/admin/#/login">登录后台</a>，在「密钥」页{{end}}签发一个 API Key。签发后页面会给出一段完整的接入提示词。</p></li>
+    <li><p>把提示词粘贴给你的 agent（pi、Claude Code、Codex 等）。它会下载技能、保存凭据并验证连接。</p></li>
+    <li><p>之后直接让它做页面，例如“把这份调研整理成一页报告发给我”。它会返回一个以 <span class="mono">{{.Server}}/a/</span> 开头的链接。</p></li>
+  </ol>
+
+  <h3 class="section-title">技能包</h3>
+  <p>当前版本 <span class="mono">{{.SkillVersion}}</span>。下载地址 <a class="mono" href="/skill.tar.gz">{{.Server}}/skill.tar.gz</a>，也可以单独查看 <a href="/skill/SKILL.md">SKILL.md</a>。</p>
+
+  {{if .Public}}
+  <h3 class="section-title">公开的 artifact</h3>
+  <div class="grid-list">
+    {{range .Public}}<a href="/a/{{.ID}}"><strong>{{.Title}}</strong><span>{{.OwnerName}}，{{ago .UpdatedAt}}更新</span></a>{{end}}
+  </div>
+  {{end}}
+  <footer class="foot">Artifact 服务 {{.Version}}</footer>
+</main>
+</body>
+</html>{{end}}

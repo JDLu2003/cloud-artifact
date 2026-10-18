@@ -1,0 +1,23 @@
+{{define "source.tmpl"}}{{template "head" (print .A.Title " 的源码")}}</head>
+<body>
+<header class="bar">
+  {{template "mark"}}
+  <div class="bar-title"><h1>{{.A.Title}}</h1><span class="bar-meta"><span>源码</span><span class="num">v{{.Ver}}</span></span></div>
+  <nav class="bar-actions"><a class="btn" href="/a/{{.A.ID}}/history">历史</a><a class="btn outline" href="/a/{{.A.ID}}?v={{.Ver}}">查看页面</a></nav>
+</header>
+<main class="page">
+  <div class="source">
+    <nav aria-label="文件列表">
+      {{range .Files}}<a href="/a/{{$.A.ID}}/source?v={{$.Ver}}&path={{.Path}}"{{if eq .Path $.Sel.Path}} class="on" aria-current="page"{{end}}>{{.Path}}<span class="num">{{bytes .Size}}</span></a>{{end}}
+    </nav>
+    <section class="code">
+      <header><span class="mono">{{.Sel.Path}}</span><span>{{.Sel.Mime}}，{{bytes .Sel.Size}}</span><a href="{{.FileURL}}" target="_blank" rel="noopener">原始文件</a></header>
+      {{if .Lines}}
+      <div class="lines"><table><tbody>{{range $i, $l := .Lines}}<tr><td class="ln num">{{add $i 1}}</td><td class="src">{{$l}}</td></tr>{{end}}</tbody></table></div>
+      {{else if .IsImage}}<div class="img"><img src="{{.FileURL}}" alt="{{.Sel.Path}}"></div>
+      {{else}}<div class="empty" style="padding:16px;color:var(--muted)">二进制文件或文件过大，无法在这里显示。</div>{{end}}
+    </section>
+  </div>
+</main>
+</body>
+</html>{{end}}

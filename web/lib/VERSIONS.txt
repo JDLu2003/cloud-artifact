@@ -1,0 +1,9 @@
+本目录中的第三方库按固定版本从 npm 下载，未做修改。由服务端在 /_lib/ 下提供。
+
+mermaid          11.4.1   mermaid/mermaid.min.js
+chart.js         4.4.7    chartjs/chart.umd.js
+d3               7.9.0    d3/d3.min.js
+katex            0.16.11  katex/katex.min.js, katex.min.css, auto-render.min.js, fonts/
+highlight.js     11.10.0  highlight/highlight.min.js, styles/github(-dark).min.css
+lucide           0.460.0  lucide/lucide.min.js
+htm (preact)     3.1.1    preact/htm-preact.module.js（管理后台使用）

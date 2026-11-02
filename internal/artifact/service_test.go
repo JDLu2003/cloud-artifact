@@ -25,6 +25,7 @@ func newTestService(t *testing.T) (*Service, Actor) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	bl.SetLocator(st.BlobLocation)
 	u, err := st.CreateUser(store.NewUser{Name: "alice"})
 	if err != nil {
 		t.Fatal(err)
@@ -221,5 +222,39 @@ func TestInlineDiff(t *testing.T) {
 	}
 	if len(ca) < 2 || len(cb) < 2 {
 		t.Fatalf("expected two separate changed segments, got %q / %q", ca, cb)
+	}
+}
+
+func TestObjectLayoutAndGC(t *testing.T) {
+	svc, a := newTestService(t)
+	ctx := context.Background()
+	r1, err := svc.Publish(ctx, PublishInput{Files: files("index.html", "<p>1</p>", "css/a.css", "p{}"), Actor: a})
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := 1
+	if _, err := svc.Publish(ctx, PublishInput{ArtifactID: r1.ID, BaseVersion: &base, Files: files("index.html", "<p>2</p>"), Actor: a}); err != nil {
+		t.Fatal(err)
+	}
+	// 每个版本都是完整快照，未修改的文件也在 v2 下
+	for _, k := range []string{"/v1/index.html", "/v1/css/a.css", "/v2/index.html", "/v2/css/a.css"} {
+		b, err := svc.Blobs.ReadKey(r1.ID + k)
+		if err != nil {
+			t.Fatalf("缺少对象 %s: %v", k, err)
+		}
+		_ = b
+	}
+	if b, _ := svc.Blobs.ReadKey(r1.ID + "/v2/index.html"); string(b) != "<p>2</p>" {
+		t.Fatalf("v2 内容 = %q", b)
+	}
+	// 彻底删除后 GC 清掉对象
+	if err := svc.Store.Purge(r1.ID); err != nil {
+		t.Fatal(err)
+	}
+	if n, _, err := svc.GC(); err != nil || n != 4 {
+		t.Fatalf("GC = %d, %v", n, err)
+	}
+	if svc.Blobs.HasKey(r1.ID + "/v1/index.html") {
+		t.Fatal("对象应已被清理")
 	}
 }

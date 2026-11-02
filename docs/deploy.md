@@ -79,12 +79,23 @@ docker compose up -d --build
 
 ## 使用对象存储（Cloudflare R2 等 S3 兼容服务）
 
-默认文件内容存放在 `data/blobs/`。在 `.env` 中设置 `ARTIFACT_S3_*`（见 `.env.example`）后，文件内容改存对象存储，SQLite 数据库仍在本机 `data/`，需要照常备份。
+在 `.env` 中设置 `ARTIFACT_S3_*`（见 `.env.example`）后，artifact 的文件改存对象存储，SQLite 数据库仍在本机 `data/`，需要照常备份。
 
-从本地迁移已有数据：
+对象按 artifact 组织，每个版本是一份完整快照：
 
-1. 在 `.env` 写入 `ARTIFACT_S3_*` 配置，先不重启服务。
-2. `docker compose run --rm artifact artifactd migrate-blobs`，逐个校验 sha256 后上传，已存在的会跳过，可重复执行。
-3. `docker compose up -d` 重启服务，确认页面都能打开后，再删除 `data/blobs/`。
+```
+<artifact_id>/v<版本号>/<文件路径>
+例：kP3xQ9aB2c/v3/index.html
+    kP3xQ9aB2c/v3/css/app.css
+```
 
-R2 的 API 令牌需要对该存储桶有「对象读和写」权限；R2 的 Access Key 与 Secret Key 要在 Cloudflare 控制台的 R2 → 管理 API 令牌里创建。
+数据库只记录标题、版本、权限等元数据；没有数据库时对象仍可在存储里直接浏览，但页面的标题、可见性等信息会丢，所以数据库要备份。未配置 `ARTIFACT_S3_BUCKET` 时同样的布局写在本机 `data/blobs/` 下。
+
+从旧版（按 sha256 拆分的 `data/blobs/ab/cdef…`）迁移：
+
+1. 在 `.env` 写入 `ARTIFACT_S3_*`，先备份数据库：`artifactd backup /data/pre-migrate.db`。
+2. `docker compose run --rm artifact migrate-blobs`：按数据库里的版本记录，把文件校验 sha256 后写到新布局，已存在的会跳过，可重复执行。
+3. `docker compose up -d` 重启服务，确认页面都能打开。
+4. `docker compose run --rm artifact migrate-blobs --purge-legacy`：再补一遍增量，并删除对象存储里旧布局的对象。确认无误后再删本机旧的 `data/blobs/`。
+
+R2 的 API 令牌需要对该存储桶有「对象读和写」权限。Access Key 与 Secret Key 在 Cloudflare 控制台的 R2 → 管理 API 令牌里创建。

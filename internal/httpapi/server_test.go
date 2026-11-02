@@ -40,6 +40,7 @@ func setup(t *testing.T) *env {
 	}
 	t.Cleanup(func() { st.Close() })
 	bl, _ := blob.New(filepath.Join(dir, "blobs"))
+	bl.SetLocator(st.BlobLocation)
 	libFS, _ := fs.Sub(assets.FS, "web/lib")
 	adminFS, _ := fs.Sub(assets.FS, "web/admin")
 	viewerFS, _ := fs.Sub(assets.FS, "web/viewer")

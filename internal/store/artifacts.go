@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"unicode/utf8"
+	"vps-artifact/internal/blob"
 )
 
 type Artifact struct {
@@ -387,6 +388,31 @@ func (s *Store) VersionFile(artifactID string, n int, path string) (*VersionFile
 }
 
 // ---- blob 与统计 ----
+
+// BlobLocation 返回某个内容（按 sha256）当前存放的一处位置。
+func (s *Store) BlobLocation(sha string) (blob.Loc, bool) {
+	var l blob.Loc
+	err := s.DB.QueryRow(`SELECT artifact_id,version,path FROM version_files WHERE sha256=? ORDER BY version DESC LIMIT 1`, sha).Scan(&l.ArtifactID, &l.Version, &l.Path)
+	return l, err == nil
+}
+
+// LiveFileKeys 返回数据库中所有仍被引用的对象键。
+func (s *Store) LiveFileKeys() (map[string]bool, error) {
+	rows, err := s.DB.Query(`SELECT artifact_id,version,path FROM version_files`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	m := map[string]bool{}
+	for rows.Next() {
+		var l blob.Loc
+		if err := rows.Scan(&l.ArtifactID, &l.Version, &l.Path); err != nil {
+			return nil, err
+		}
+		m[l.Key()] = true
+	}
+	return m, rows.Err()
+}
 
 // UnreferencedBlobs 返回没有任何版本引用的 blob。
 func (s *Store) UnreferencedBlobs() ([]VersionFile, error) {

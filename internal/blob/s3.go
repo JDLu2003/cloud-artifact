@@ -5,11 +5,13 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/xml"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"os"
+	"sort"
 	"strings"
 	"time"
 )
@@ -46,8 +48,22 @@ func NewS3(cfg S3Config) (*Store, error) {
 	return &Store{b: &s3Backend{cfg: cfg, base: u, client: &http.Client{Timeout: 60 * time.Second}}}, nil
 }
 
-func (s *s3Backend) key(sha string) string {
-	return s.cfg.Prefix + sha[:2] + "/" + sha[2:]
+func (s *s3Backend) key(k string) string { return s.cfg.Prefix + k }
+
+// uriEncode 按 SigV4 要求编码：除 A-Za-z0-9-._~ 外全部百分号编码；slash 为 false 时连 / 也编码。
+func uriEncode(in string, slash bool) string {
+	var b strings.Builder
+	for _, c := range []byte(in) {
+		switch {
+		case c >= 'A' && c <= 'Z', c >= 'a' && c <= 'z', c >= '0' && c <= '9', c == '-', c == '.', c == '_', c == '~':
+			b.WriteByte(c)
+		case c == '/' && !slash:
+			b.WriteByte(c)
+		default:
+			fmt.Fprintf(&b, "%%%02X", c)
+		}
+	}
+	return b.String()
 }
 
 func hmacSHA256(key []byte, msg string) []byte {
@@ -57,18 +73,29 @@ func hmacSHA256(key []byte, msg string) []byte {
 }
 
 // do 发起带 SigV4 签名的请求。bodySHA 是请求体的 sha256 十六进制。
-func (s *s3Backend) do(method, key string, body []byte, bodySHA string) (*http.Response, error) {
-	path := "/" + s.cfg.Bucket + "/" + key
+func (s *s3Backend) do(method, key string, query url.Values, body []byte, bodySHA string) (*http.Response, error) {
+	canonPath := uriEncode(strings.TrimRight(s.base.Path, "/")+"/"+s.cfg.Bucket+"/"+key, false)
+	var qs []string
+	for k, vs := range query {
+		for _, v := range vs {
+			qs = append(qs, uriEncode(k, true)+"="+uriEncode(v, true))
+		}
+	}
+	sort.Strings(qs)
+	canonQuery := strings.Join(qs, "&")
 	u := *s.base
-	u.Path = strings.TrimRight(s.base.Path, "/") + path
-	canonPath := u.EscapedPath()
+	u.Path, u.RawPath, u.RawQuery = "", "", ""
+	target := u.String() + canonPath
+	if canonQuery != "" {
+		target += "?" + canonQuery
+	}
 	now := time.Now().UTC()
 	amzDate := now.Format("20060102T150405Z")
 	day := now.Format("20060102")
 
 	signed := "host;x-amz-content-sha256;x-amz-date"
 	canonical := strings.Join([]string{
-		method, canonPath, "",
+		method, canonPath, canonQuery,
 		"host:" + u.Host + "\nx-amz-content-sha256:" + bodySHA + "\nx-amz-date:" + amzDate + "\n",
 		signed, bodySHA,
 	}, "\n")
@@ -85,7 +112,7 @@ func (s *s3Backend) do(method, key string, body []byte, bodySHA string) (*http.R
 	if body != nil {
 		rd = bytes.NewReader(body)
 	}
-	req, err := http.NewRequest(method, u.String(), rd)
+	req, err := http.NewRequest(method, target, rd)
 	if err != nil {
 		return nil, err
 	}
@@ -103,8 +130,8 @@ func respErr(op string, resp *http.Response) error {
 	return fmt.Errorf("对象存储 %s 失败：HTTP %d %s", op, resp.StatusCode, strings.TrimSpace(string(b)))
 }
 
-func (s *s3Backend) has(sha string) bool {
-	resp, err := s.do(http.MethodHead, s.key(sha), nil, emptySHA)
+func (s *s3Backend) has(key string) bool {
+	resp, err := s.do(http.MethodHead, s.key(key), nil, nil, emptySHA)
 	if err != nil {
 		return false
 	}
@@ -112,9 +139,8 @@ func (s *s3Backend) has(sha string) bool {
 	return resp.StatusCode == http.StatusOK
 }
 
-func (s *s3Backend) put(sha string, data []byte) error {
-	// 内容按 sha256 寻址，因此签名用的 payload 哈希就是 sha 本身。
-	resp, err := s.do(http.MethodPut, s.key(sha), data, sha)
+func (s *s3Backend) put(key string, data []byte) error {
+	resp, err := s.do(http.MethodPut, s.key(key), nil, data, Sum(data))
 	if err != nil {
 		return err
 	}
@@ -125,8 +151,8 @@ func (s *s3Backend) put(sha string, data []byte) error {
 	return nil
 }
 
-func (s *s3Backend) read(sha string) ([]byte, error) {
-	resp, err := s.do(http.MethodGet, s.key(sha), nil, emptySHA)
+func (s *s3Backend) read(key string) ([]byte, error) {
+	resp, err := s.do(http.MethodGet, s.key(key), nil, nil, emptySHA)
 	if err != nil {
 		return nil, err
 	}
@@ -140,8 +166,8 @@ func (s *s3Backend) read(sha string) ([]byte, error) {
 	return io.ReadAll(resp.Body)
 }
 
-func (s *s3Backend) del(sha string) error {
-	resp, err := s.do(http.MethodDelete, s.key(sha), nil, emptySHA)
+func (s *s3Backend) del(key string) error {
+	resp, err := s.do(http.MethodDelete, s.key(key), nil, nil, emptySHA)
 	if err != nil {
 		return err
 	}
@@ -150,4 +176,44 @@ func (s *s3Backend) del(sha string) error {
 		return respErr("DELETE", resp)
 	}
 	return nil
+}
+
+func (s *s3Backend) list() ([]string, error) {
+	var keys []string
+	token := ""
+	for {
+		q := url.Values{"list-type": {"2"}}
+		if s.cfg.Prefix != "" {
+			q.Set("prefix", s.cfg.Prefix)
+		}
+		if token != "" {
+			q.Set("continuation-token", token)
+		}
+		resp, err := s.do(http.MethodGet, "", q, nil, emptySHA)
+		if err != nil {
+			return nil, err
+		}
+		if resp.StatusCode != http.StatusOK {
+			err := respErr("LIST", resp)
+			resp.Body.Close()
+			return nil, err
+		}
+		var res struct {
+			Contents              []struct{ Key string }
+			IsTruncated           bool
+			NextContinuationToken string
+		}
+		err = xml.NewDecoder(resp.Body).Decode(&res)
+		resp.Body.Close()
+		if err != nil {
+			return nil, err
+		}
+		for _, c := range res.Contents {
+			keys = append(keys, strings.TrimPrefix(c.Key, s.cfg.Prefix))
+		}
+		if !res.IsTruncated || res.NextContinuationToken == "" {
+			return keys, nil
+		}
+		token = res.NextContinuationToken
+	}
 }

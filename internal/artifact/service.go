@@ -42,7 +42,8 @@ type Service struct {
 	Signer    *auth.Signer
 	LibExists func(string) bool
 
-	gcMu sync.RWMutex // 发布时读锁，GC 时写锁，避免刚写入的 blob 被回收
+	gcMu  sync.RWMutex // 发布时读锁，GC 时写锁，避免刚写入的对象被回收
+	pubMu sync.Mutex   // 串行化“写对象 + 写数据库”，避免并发发布互相覆盖同一版本的对象
 }
 
 // Actor 是发起操作的身份。
@@ -343,31 +344,57 @@ func (s *Service) Publish(ctx context.Context, in PublishInput) (*PublishResult,
 		return res, nil
 	}
 
-	// 6. 写入 blob 与数据库
+	// 6. 把本版本的完整快照写到 <artifact_id>/v<N>/<path>，再写数据库
 	s.gcMu.RLock()
 	defer s.gcMu.RUnlock()
-	for _, data := range newBlobs {
-		if _, err := s.Blobs.Put(data); err != nil {
-			return nil, fmt.Errorf("写入文件失败：%w", err)
+	s.pubMu.Lock()
+	defer s.pubMu.Unlock()
+	artID, prev := "", 0
+	if art != nil {
+		artID, prev = art.ID, art.CurrentVersion
+		if latest, err := s.Store.ArtifactByID(art.ID); err != nil {
+			return nil, err
+		} else if latest.CurrentVersion != prev {
+			e := errf(409, "conflict", "版本冲突：有另一个发布同时写入了这个 artifact，请重试。")
+			e.Data = map[string]any{"current_version": latest.CurrentVersion}
+			return nil, e
+		}
+	} else {
+		for i := 0; i < 5; i++ {
+			artID = auth.RandomString(10)
+			if !s.Store.ArtifactExists(artID) {
+				break
+			}
+		}
+	}
+	var written []string
+	cleanup := func() {
+		for _, k := range written {
+			s.Blobs.DeleteKey(k)
 		}
 	}
 	for _, f := range files {
-		if !s.Blobs.Has(f.SHA256) {
-			return nil, errf(500, "blob_missing", "文件 %s 的内容在存储中缺失", f.Path)
+		data, ok := newBlobs[f.SHA256]
+		if !ok {
+			var err error
+			if data, err = s.Blobs.Read(f.SHA256); err != nil {
+				cleanup()
+				return nil, errf(500, "blob_missing", "文件 %s 的内容在存储中缺失", f.Path)
+			}
 		}
+		loc := blob.Loc{ArtifactID: artID, Version: prev + 1, Path: f.Path}
+		if err := s.Blobs.PutAt(loc, data); err != nil {
+			cleanup()
+			return nil, fmt.Errorf("写入文件失败：%w", err)
+		}
+		written = append(written, loc.Key())
 	}
 	errs, _, _ := lint.Summary(warnings)
 	nowTS := time.Now().Unix()
 	body := searchText(kind, texts[entry])
 	err = s.Store.Tx(ctx, func(tx *sql.Tx) error {
 		if art == nil {
-			art = &store.Artifact{OwnerID: owner.ID, CreatedAt: nowTS}
-			for i := 0; i < 5; i++ {
-				art.ID = auth.RandomString(10)
-				if !s.Store.ArtifactExists(art.ID) {
-					break
-				}
-			}
+			art = &store.Artifact{ID: artID, OwnerID: owner.ID, CreatedAt: nowTS}
 			res.Created = true
 			art.Title, art.Description, art.Kind, art.Entry, art.Visibility = title, desc, kind, entry, vis
 			art.UpdatedAt = nowTS
@@ -375,7 +402,6 @@ func (s *Service) Publish(ctx context.Context, in PublishInput) (*PublishResult,
 				return err
 			}
 		}
-		prev := art.CurrentVersion
 		v := &store.Version{ArtifactID: art.ID, Number: prev + 1, Message: truncate(in.Message, 500), Source: in.Source,
 			Entry: entry, AuthorUserID: in.Actor.uid(), AuthorKeyID: in.Actor.KeyID, TotalSize: total,
 			FileCount: len(files), Warnings: errs, CreatedAt: nowTS}
@@ -403,6 +429,7 @@ func (s *Service) Publish(ctx context.Context, in PublishInput) (*PublishResult,
 		return store.PruneVersions(tx, art.ID, st.MaxVersions)
 	})
 	if err != nil {
+		cleanup()
 		return nil, err
 	}
 	action := "artifact.publish"
@@ -686,7 +713,7 @@ func (s *Service) UpdateMeta(a Actor, id string, p MetaPatch) (*store.Artifact, 
 	return s.Store.ArtifactByID(art.ID)
 }
 
-// GC 删除没有任何版本引用的 blob，并清理过期回收站。
+// GC 删除没有任何版本引用的对象，并清理过期回收站。
 func (s *Service) GC() (int, int64, error) {
 	st := s.Store.Settings()
 	for _, id := range s.Store.ExpiredTrash(st.TrashDays) {
@@ -696,19 +723,30 @@ func (s *Service) GC() (int, int64, error) {
 	}
 	s.gcMu.Lock()
 	defer s.gcMu.Unlock()
-	blobs, err := s.Store.UnreferencedBlobs()
+	// 删除数据库里已不存在的版本（被清理的旧版本、已彻底删除的 artifact）对应的对象
+	keys, err := s.Blobs.List()
 	if err != nil {
 		return 0, 0, err
 	}
-	var freed int64
+	live, err := s.Store.LiveFileKeys()
+	if err != nil {
+		return 0, 0, err
+	}
 	n := 0
-	for _, b := range blobs {
-		if err := s.Blobs.Delete(b.SHA256); err != nil {
+	var freed int64
+	for _, k := range keys {
+		if !blob.IsArtifactKey(k) || live[k] {
 			continue
 		}
-		s.Store.DeleteBlobRow(b.SHA256)
-		freed += b.Size
+		if err := s.Blobs.DeleteKey(k); err != nil {
+			continue
+		}
 		n++
+	}
+	if bl, err := s.Store.UnreferencedBlobs(); err == nil {
+		for _, b := range bl {
+			s.Store.DeleteBlobRow(b.SHA256)
+		}
 	}
 	return n, freed, nil
 }

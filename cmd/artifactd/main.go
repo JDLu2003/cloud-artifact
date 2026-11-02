@@ -67,7 +67,7 @@ func main() {
 	case "backup":
 		err = cmdBackup(args[1:])
 	case "migrate-blobs":
-		err = cmdMigrateBlobs()
+		err = cmdMigrateBlobs(args[1:])
 	case "version", "-v", "--version":
 		fmt.Println("artifactd", Version)
 	case "help", "-h", "--help":
@@ -95,7 +95,7 @@ func usage() {
   prompt <用户名>                    签发新 Key 并打印给 agent 的接入提示词
   check <文件或目录>                 本地运行发布前检查
   gc                                 清理无引用文件和过期回收站
-  migrate-blobs                      把本地 blobs/ 里的文件上传到对象存储（需配置 ARTIFACT_S3_*，可重复执行）
+  migrate-blobs [--purge-legacy]     把旧版 blobs/ 布局迁到 <artifact_id>/v<版本>/<路径>（可重复执行）
   backup <文件>                      在线备份数据库（blobs/ 目录另行复制）
   version
 
@@ -135,6 +135,7 @@ func open() (*app, error) {
 	if err != nil {
 		return nil, err
 	}
+	bl.SetLocator(st.BlobLocation)
 	secret := cfg.Secret
 	if secret == "" {
 		secret, err = st.GetKV("secret")
@@ -546,60 +547,84 @@ func cmdBackup(args []string) error {
 	if _, err := a.store.DB.Exec(`VACUUM INTO ?`, args[0]); err != nil {
 		return err
 	}
-	fmt.Printf("数据库已备份到 %s。文件内容在 %s，请一并复制。\n", args[0], filepath.Join(a.cfg.DataDir, "blobs"))
+	fmt.Printf("数据库已备份到 %s。文件内容在 %s（或对象存储），请一并备份。\n", args[0], filepath.Join(a.cfg.DataDir, "blobs"))
 	return nil
 }
 
-// cmdMigrateBlobs 把本地 DataDir/blobs 下的文件逐个校验后上传到对象存储。已存在的会跳过，可重复执行。
-func cmdMigrateBlobs() error {
-	cfg, err := config.Load()
+// cmdMigrateBlobs 把旧版本地布局（data/blobs/ab/cdef…，按 sha256 拆分）迁移到当前布局
+// <artifact_id>/v<版本>/<路径>，目标是当前配置的存储（配置了 ARTIFACT_S3_* 就是对象存储）。
+// 已存在的对象会跳过，可重复执行。加 --purge-legacy 会在迁移成功后删除目标存储里旧布局的对象。
+func cmdMigrateBlobs(args []string) error {
+	purge := len(args) > 0 && args[0] == "--purge-legacy"
+	a, err := open()
 	if err != nil {
 		return err
 	}
-	if !cfg.S3Enabled() {
-		return errors.New("未配置对象存储：请设置 ARTIFACT_S3_ENDPOINT、ARTIFACT_S3_BUCKET、ARTIFACT_S3_ACCESS_KEY、ARTIFACT_S3_SECRET_KEY")
-	}
-	dst, err := blob.NewS3(s3Config(cfg))
+	defer a.store.Close()
+	legacy := filepath.Join(a.cfg.DataDir, "blobs")
+	rows, err := a.store.DB.Query(`SELECT artifact_id,version,path,sha256 FROM version_files ORDER BY artifact_id,version,path`)
 	if err != nil {
 		return err
 	}
-	root := filepath.Join(cfg.DataDir, "blobs")
-	var total, uploaded, skipped, bad int
-	err = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
-		if err != nil {
+	type item struct {
+		loc blob.Loc
+		sha string
+	}
+	var items []item
+	for rows.Next() {
+		var it item
+		if err := rows.Scan(&it.loc.ArtifactID, &it.loc.Version, &it.loc.Path, &it.sha); err != nil {
+			rows.Close()
 			return err
 		}
-		if d.IsDir() || strings.HasPrefix(d.Name(), ".tmp-") {
-			return nil
-		}
-		rel, _ := filepath.Rel(root, p)
-		sha := strings.ReplaceAll(rel, string(filepath.Separator), "")
-		data, err := os.ReadFile(p)
-		if err != nil {
-			return err
-		}
-		total++
-		if blob.Sum(data) != sha {
-			fmt.Fprintf(os.Stderr, "跳过：%s 内容与文件名的 sha256 不一致\n", rel)
-			bad++
-			return nil
-		}
-		if dst.Has(sha) {
+		items = append(items, it)
+	}
+	rows.Close()
+	var uploaded, skipped, missing int
+	for _, it := range items {
+		if a.blobs.HasKey(it.loc.Key()) {
 			skipped++
-			return nil
+			continue
 		}
-		if _, err := dst.Put(data); err != nil {
-			return fmt.Errorf("上传 %s：%w", sha, err)
+		if len(it.sha) != 64 {
+			missing++
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(legacy, it.sha[:2], it.sha[2:]))
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "缺失：%s（%s）\n", it.loc.Key(), err)
+			missing++
+			continue
+		}
+		if blob.Sum(data) != it.sha {
+			fmt.Fprintf(os.Stderr, "校验失败：%s\n", it.loc.Key())
+			missing++
+			continue
+		}
+		if err := a.blobs.PutAt(it.loc, data); err != nil {
+			return fmt.Errorf("上传 %s：%w", it.loc.Key(), err)
 		}
 		uploaded++
-		return nil
-	})
-	if err != nil {
-		return err
 	}
-	fmt.Printf("共 %d 个文件：新上传 %d，已存在 %d，校验失败 %d\n", total, uploaded, skipped, bad)
-	if bad > 0 {
-		return errors.New("有文件校验失败")
+	fmt.Printf("数据库里共 %d 个文件：新写入 %d，已存在 %d，失败 %d\n", len(items), uploaded, skipped, missing)
+	if missing > 0 {
+		return errors.New("有文件迁移失败，未清理旧对象")
+	}
+	if purge {
+		keys, err := a.blobs.List()
+		if err != nil {
+			return err
+		}
+		n := 0
+		for _, k := range keys {
+			if blob.IsLegacyKey(k) {
+				if err := a.blobs.DeleteKey(k); err != nil {
+					return err
+				}
+				n++
+			}
+		}
+		fmt.Printf("已删除目标存储里旧布局的对象 %d 个\n", n)
 	}
 	return nil
 }

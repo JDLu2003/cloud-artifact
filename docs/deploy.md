@@ -76,3 +76,15 @@ docker compose up -d --build
 ```
 
 数据库迁移在启动时自动执行，升级前建议先备份（见 README）。
+
+## 使用对象存储（Cloudflare R2 等 S3 兼容服务）
+
+默认文件内容存放在 `data/blobs/`。在 `.env` 中设置 `ARTIFACT_S3_*`（见 `.env.example`）后，文件内容改存对象存储，SQLite 数据库仍在本机 `data/`，需要照常备份。
+
+从本地迁移已有数据：
+
+1. 在 `.env` 写入 `ARTIFACT_S3_*` 配置，先不重启服务。
+2. `docker compose run --rm artifact artifactd migrate-blobs`，逐个校验 sha256 后上传，已存在的会跳过，可重复执行。
+3. `docker compose up -d` 重启服务，确认页面都能打开后，再删除 `data/blobs/`。
+
+R2 的 API 令牌需要对该存储桶有「对象读和写」权限；R2 的 Access Key 与 Secret Key 要在 Cloudflare 控制台的 R2 → 管理 API 令牌里创建。

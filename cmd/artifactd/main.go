@@ -66,6 +66,8 @@ func main() {
 		err = cmdGC()
 	case "backup":
 		err = cmdBackup(args[1:])
+	case "migrate-blobs":
+		err = cmdMigrateBlobs()
 	case "version", "-v", "--version":
 		fmt.Println("artifactd", Version)
 	case "help", "-h", "--help":
@@ -93,6 +95,7 @@ func usage() {
   prompt <用户名>                    签发新 Key 并打印给 agent 的接入提示词
   check <文件或目录>                 本地运行发布前检查
   gc                                 清理无引用文件和过期回收站
+  migrate-blobs                      把本地 blobs/ 里的文件上传到对象存储（需配置 ARTIFACT_S3_*，可重复执行）
   backup <文件>                      在线备份数据库（blobs/ 目录另行复制）
   version
 
@@ -109,6 +112,11 @@ type app struct {
 	libFS  fs.FS
 }
 
+func s3Config(cfg *config.Config) blob.S3Config {
+	return blob.S3Config{Endpoint: cfg.S3Endpoint, Bucket: cfg.S3Bucket, AccessKey: cfg.S3AccessKey,
+		SecretKey: cfg.S3SecretKey, Region: cfg.S3Region, Prefix: cfg.S3Prefix}
+}
+
 func open() (*app, error) {
 	cfg, err := config.Load()
 	if err != nil {
@@ -118,7 +126,12 @@ func open() (*app, error) {
 	if err != nil {
 		return nil, err
 	}
-	bl, err := blob.New(filepath.Join(cfg.DataDir, "blobs"))
+	var bl *blob.Store
+	if cfg.S3Enabled() {
+		bl, err = blob.NewS3(s3Config(cfg))
+	} else {
+		bl, err = blob.New(filepath.Join(cfg.DataDir, "blobs"))
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -534,5 +547,59 @@ func cmdBackup(args []string) error {
 		return err
 	}
 	fmt.Printf("数据库已备份到 %s。文件内容在 %s，请一并复制。\n", args[0], filepath.Join(a.cfg.DataDir, "blobs"))
+	return nil
+}
+
+// cmdMigrateBlobs 把本地 DataDir/blobs 下的文件逐个校验后上传到对象存储。已存在的会跳过，可重复执行。
+func cmdMigrateBlobs() error {
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+	if !cfg.S3Enabled() {
+		return errors.New("未配置对象存储：请设置 ARTIFACT_S3_ENDPOINT、ARTIFACT_S3_BUCKET、ARTIFACT_S3_ACCESS_KEY、ARTIFACT_S3_SECRET_KEY")
+	}
+	dst, err := blob.NewS3(s3Config(cfg))
+	if err != nil {
+		return err
+	}
+	root := filepath.Join(cfg.DataDir, "blobs")
+	var total, uploaded, skipped, bad int
+	err = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() || strings.HasPrefix(d.Name(), ".tmp-") {
+			return nil
+		}
+		rel, _ := filepath.Rel(root, p)
+		sha := strings.ReplaceAll(rel, string(filepath.Separator), "")
+		data, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		total++
+		if blob.Sum(data) != sha {
+			fmt.Fprintf(os.Stderr, "跳过：%s 内容与文件名的 sha256 不一致\n", rel)
+			bad++
+			return nil
+		}
+		if dst.Has(sha) {
+			skipped++
+			return nil
+		}
+		if _, err := dst.Put(data); err != nil {
+			return fmt.Errorf("上传 %s：%w", sha, err)
+		}
+		uploaded++
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	fmt.Printf("共 %d 个文件：新上传 %d，已存在 %d，校验失败 %d\n", total, uploaded, skipped, bad)
+	if bad > 0 {
+		return errors.New("有文件校验失败")
+	}
 	return nil
 }

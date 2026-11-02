@@ -21,7 +21,18 @@ type Config struct {
 	MinFreeDiskMB int64  // 磁盘剩余低于该值时拒绝写入
 	TrustProxy    bool   // 是否信任 X-Forwarded-For / X-Forwarded-Proto
 	MaxBodyMB     int64  // 单个请求体上限
+
+	// 对象存储（S3 兼容，如 Cloudflare R2）。S3Bucket 非空时文件内容存放到对象存储，否则存本地 DataDir/blobs。
+	S3Endpoint  string
+	S3Bucket    string
+	S3AccessKey string
+	S3SecretKey string
+	S3Region    string
+	S3Prefix    string
 }
+
+// S3Enabled 表示文件内容是否存放在对象存储。
+func (c *Config) S3Enabled() bool { return c.S3Bucket != "" }
 
 func env(key, def string) string {
 	if v, ok := os.LookupEnv(key); ok && strings.TrimSpace(v) != "" {
@@ -67,6 +78,12 @@ func Load() (*Config, error) {
 		MinFreeDiskMB: envInt("ARTIFACT_MIN_FREE_DISK_MB", 300),
 		TrustProxy:    envBool("ARTIFACT_TRUST_PROXY", false),
 		MaxBodyMB:     envInt("ARTIFACT_MAX_BODY_MB", 64),
+		S3Endpoint:    strings.TrimRight(env("ARTIFACT_S3_ENDPOINT", ""), "/"),
+		S3Bucket:      env("ARTIFACT_S3_BUCKET", ""),
+		S3AccessKey:   env("ARTIFACT_S3_ACCESS_KEY", ""),
+		S3SecretKey:   env("ARTIFACT_S3_SECRET_KEY", ""),
+		S3Region:      env("ARTIFACT_S3_REGION", "auto"),
+		S3Prefix:      env("ARTIFACT_S3_PREFIX", ""),
 	}
 	if _, err := url.ParseRequestURI(c.PublicURL); err != nil {
 		return nil, fmt.Errorf("ARTIFACT_PUBLIC_URL 无效：%w", err)

@@ -87,7 +87,7 @@ td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; }
   <article>
     <header class="doc-head">
       <h1>会话缓存迁移复盘</h1>
-      <p class="lead">第三季度，我们把会话缓存从单机 Redis 迁到了三节点集群。迁移后，高峰期登录接口的 P99 延迟从 1.8 秒降到 240 毫秒，全季度没有再出现因缓存宕机导致的登录失败。还有两件事需要在 10 月底前决定，见最后一节。</p>
+      <p class="lead">第三季度，我们把会话缓存从单机 Redis 迁到了三节点集群。迁移后，高峰期登录接口的 P99 延迟从 1.8 秒降到 240 毫秒，全季度没有再出现因缓存宕机导致的登录失败。报表服务是否接入、告警阈值是否收紧，需要在 10 月底前决定，见最后一节。</p>
       <div class="meta"><span>基础架构组 林栩</span><span>2026 年 10 月 16 日</span></div>
     </header>
 
@@ -115,7 +115,7 @@ td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; }
           <text x="477" y="100" font-size="12">未命中时回源</text>
         </g>
       </svg>
-      <figcaption>图 1：每个会话固定落在一个分片上；只有未命中时才访问数据库。</figcaption>
+      <figcaption>图 1：会话按哈希值固定分到某个分片，未命中时回源数据库。</figcaption>
     </figure>
 
     <h2 id="result">效果</h2>

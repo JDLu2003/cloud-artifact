@@ -97,7 +97,13 @@ var (
 	reClause      = regexp.MustCompile(`[，。；：！？、\n,;:!?]`)
 	reSentence    = regexp.MustCompile(`[。！？\n]`)
 	reMetaSep     = regexp.MustCompile(`[ 　\t][/·|｜•][ 　\t]`)
-	reReadTime    = regexp.MustCompile(`(阅读|读完)[^\n]{0,6}\d+\s*分钟|约\s*\d+\s*分钟(读完|阅读)?$`)
+	// 用文字指挥操作：“点击卡片查看详情”“向下滚动”“见下方”
+	reUIGuide = regexp.MustCompile(`(点击|单击|点按|点一下|点开|轻点|轻触|双击|长按|悬停|鼠标移到|拖动|拖拽|滑动|滚动|下拉|上滑|下滑|左滑|右滑|按下|勾选)[^。；！？\n]{0,16}(查看|切换|跳转|展开|收起|进入|了解|前往|转到|浏览|筛选|打开|显示|隐藏|放大|缩小|选择|调整|播放|开始|试试|体验|探索|即可|可以|就能|来|以)|(点击|单击|点按|轻点|拖动|悬停|滚动)(这里|此处|上方|下方|左侧|右侧|上面|下面|任意)|(向|往)(下|上|左|右)(滚动|滑动|翻)|试着|试试(看)?(点|拖|切|调|改|输入)|(可以|可|你可以|您可以)(通过)?(点击|拖动|切换|滚动|使用下方|使用上方)`)
+	// 功能说明里带一句“不做某事”
+	reNegTail = regexp.MustCompile(`[，,；、]\s*(而|但|并|也|且|却|并且)?(不是|没有|不做|不会|不负责|不处理|不包含|不包括|不涉及|不再|不需要|不用|不能|不支持|不提供|不依赖|不改|不碰|不管|无需|无须|并非|而非)|而不是|而非|不是[^。！？\n]{1,30}而是|只[^。，\n]{1,12}不[^。，\n]{1,12}`)
+	// 把制作要求写进页面
+	reEcho     = regexp.MustCompile(`(采用|使用|运用|遵循|沿用|基于|保持)了?[^。，；\n]{1,12}(风格|设计语言|设计|配色|布局|排版|字体|主题|色调|版式)|(简洁|极简|克制|现代|清爽|干净|清晰|直观|优雅|精致)的?(设计|风格|界面|布局|排版|版式)|(响应式|自适应)(布局|设计)?|本(页|页面|文|文档|报告|工具|站)(已|支持|采用|使用|未使用|没有使用|不含|不使用|为|是)|按照?(你|您|用户)?的?(要求|需求|指示)|(根据|依据|应)(你|您|用户)?的?(要求|反馈|意见|需求)|(已|支持|兼容)(适配|兼容)?(手机|移动端|暗色|深色|亮色|浅色)(模式|主题|端)?|(未|不|没有)(使用|用|含|加)[^。，；\n]{0,6}(渐变|阴影|动画|动效|emoji|表情|感叹号|加粗|卡片)|已(更新|修改|调整|删除|删去|移除|优化|改为|改用|替换|重写|精简)|无(渐变|阴影|动画|动效|装饰)`)
+	reReadTime = regexp.MustCompile(`(阅读|读完)[^\n]{0,6}\d+\s*分钟|约\s*\d+\s*分钟(读完|阅读)?$`)
 )
 
 type hit struct {
@@ -182,6 +188,7 @@ func checkText(file, text string, strong int) []Warning {
 		}
 	}
 	var meta []string
+	var negTail, quantLines []string
 	nonEmpty := 0
 	for _, line := range strings.Split(text, "\n") {
 		l := strings.TrimSpace(line)
@@ -189,6 +196,15 @@ func checkText(file, text string, strong int) []Warning {
 			continue
 		}
 		nonEmpty++
+		// 只看单句文案：一行之内最多一个句号，长度有限
+		if n := runeLen(l); n >= 4 && n <= 60 && hanCount(l) > 0 && strings.Count(l, "。") <= 1 {
+			if reNegTail.MatchString(l) {
+				negTail = append(negTail, l)
+			}
+			if reQuant.MatchString(l) {
+				quantLines = append(quantLines, l)
+			}
+		}
 		if runeLen(l) > 40 || hanCount(l) == 0 || strings.ContainsAny(l, "。；，：") {
 			continue
 		}
@@ -212,6 +228,22 @@ func checkText(file, text string, strong int) []Warning {
 				meta = append(meta, l)
 			}
 		}
+	}
+	if ex := contexts(text, reUIGuide, 6); len(ex) > 0 {
+		ws = append(ws, Warning{Level: "warn", Rule: "ui-instruction", File: file, Count: len(reUIGuide.FindAllStringIndex(text, -1)),
+			Message: "用文字指挥读者操作（“点击某处查看某物”“向下滚动”“可以通过……切换”）。这类句子默认删掉，并把控件改到不需要它也看得出怎么用。只有在教程里讲解别的软件的操作步骤时才保留。", Examples: ex})
+	}
+	if ex := contexts(text, reEcho, 6); len(ex) > 0 {
+		ws = append(ws, Warning{Level: "warn", Rule: "process-echo", File: file, Count: len(reEcho.FindAllStringIndex(text, -1)),
+			Message: "疑似把制作要求、设计说明或修改记录写进了页面（风格声明、“按要求”“已适配手机”“已改为”）。读者没有看过对话，这类句子默认删掉，要说就写在给用户的回复里。只有当它讲的是页面内容本身（例如被介绍的产品采用某种设计）才保留。", Examples: ex})
+	}
+	if len(negTail) > 0 {
+		ws = append(ws, Warning{Level: "warn", Rule: "negative-tail", File: file, Count: len(negTail),
+			Message: "单句文案里带了“不是 / 没有 / 不做某事”。没做的事列不完，说明功能只写它做到了什么，默认删掉否定的那一半。只有读者照着操作会有损失的警告才保留，并放在操作发生的地方。", Examples: firstN(negTail, 5)})
+	}
+	if len(quantLines) > 0 {
+		ws = append(ws, Warning{Level: "warn", Rule: "empty-quantifier", File: file, Count: len(quantLines),
+			Message: "单句文案里有数量词（“一个”“一次”“同一个”“第一次”“一次性”）。绝大多数是凑出来的具体感，默认删掉数量词或重写这句话。只有换一个数句子的意思就变了，才保留。", Examples: firstN(quantLines, 5)})
 	}
 	if len(meta) > 0 {
 		ws = append(ws, Warning{Level: "warn", Rule: "meta-string", File: file, Count: len(meta),

@@ -209,13 +209,24 @@ var reEmojiStart = regexp.MustCompile(`^[\x{1F300}-\x{1FAFF}\x{2600}-\x{27BF}\x{
 
 var reHeadColon = regexp.MustCompile(`\p{Han}[^：:]{0,20}[：]|[A-Za-z0-9/]{1,20}[：]`)
 
+// 数量词，不设例外（“第一次”“同一个”“一次性”同样在内）。单句文案查“一 + 量词”；标题查所有数词 + 量词。
+const quantUnits = `(个|份|次|张|条|套|台|段|场|组|种|项|步|层|行|处|类|批|轮|篇|页|句|件|点)`
+
+var (
+	reQuant     = regexp.MustCompile(`一` + quantUnits)
+	reHeadQuant = regexp.MustCompile(`[一两二三四五六七八九十几]+` + quantUnits + `|\d+\s*` + quantUnits)
+)
+
 func checkHeadings(file string, hs []string) []Warning {
 	var ws []Warning
-	var emoji, colon []string
+	var emoji, colon, quant []string
 	for _, h := range hs {
 		h = strings.TrimSpace(h)
 		if reEmojiStart.MatchString(h) {
 			emoji = append(emoji, h)
+		}
+		if reHeadQuant.MatchString(h) {
+			quant = append(quant, h)
 		}
 		if reHeadColon.MatchString(h) && !strings.HasSuffix(h, "：") {
 			colon = append(colon, h)
@@ -224,6 +235,10 @@ func checkHeadings(file string, hs []string) []Warning {
 	if len(emoji) > 0 {
 		ws = append(ws, Warning{Level: "warn", Rule: "emoji-heading", File: file, Count: len(emoji),
 			Message: "标题以 emoji 开头。emoji 不承担信息，去掉；需要图标就用真正的图标或图示。", Examples: firstN(emoji, 3)})
+	}
+	if len(quant) > 0 {
+		ws = append(ws, Warning{Level: "warn", Rule: "heading-quantifier", File: file, Count: len(quant),
+			Message: "标题里有数量词（“一个”“一次”“同一个”“第一次”“三份”“20 行”）。这类写法绝大多数不携带信息，默认删掉或重写标题。只有当这个数量就是读者要带走的结论、换一个数标题的意思就变了，才保留。", Examples: firstN(quant, 6)})
 	}
 	if len(colon) >= 3 && len(colon)*2 >= len(hs) {
 		ws = append(ws, Warning{Level: "warn", Rule: "heading-colon", File: file, Count: len(colon),

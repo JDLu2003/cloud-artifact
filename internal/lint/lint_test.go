@@ -111,3 +111,18 @@ func keys(m map[string]Warning) string {
 	}
 	return strings.Join(out, ",")
 }
+
+func TestShortCopyRules(t *testing.T) {
+	r := run(`<title>页</title><style>:root{color-scheme:light}</style>
+<h1>部署手册</h1><h2>一份配置描述一个服务</h2><h2>钉住一个系统版本</h2><h2>第一次启动</h2>
+<p>采用极简风格设计</p><p>点击上方标签切换视图</p><p>这个面板显示实时流量，不做历史分析。</p>
+<p>这是一段足够长的中文内容，用来触发中文检查规则，确保规则能正常运行。</p>`)
+	for _, want := range []string{"heading-quantifier", "empty-quantifier", "ui-instruction", "process-echo", "negative-tail"} {
+		if _, ok := r[want]; !ok {
+			t.Errorf("expected rule %s, got %v", want, keys(r))
+		}
+	}
+	if w := r["heading-quantifier"]; w.Count != 3 {
+		t.Errorf("第一次 counts too, want 3 headings: %+v", w)
+	}
+}

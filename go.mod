@@ -1,9 +1,9 @@
 module vps-artifact
 
-go 1.26.5
+go 1.26.0
 
 require (
-	github.com/JDLu2003/vps-cluster v0.1.0
+	github.com/JDLu2003/vps-cluster v0.1.1
 	github.com/pmezard/go-difflib v1.0.0
 	github.com/yuin/goldmark v1.8.6
 	golang.org/x/crypto v0.58.0

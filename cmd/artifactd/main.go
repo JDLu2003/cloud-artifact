@@ -126,21 +126,25 @@ func open() (*app, error) {
 	if err != nil {
 		return nil, err
 	}
-	// 文件内容始终存本机；配置了 ARTIFACT_S3_* 时 R2 用于备份，并在本机缺失时取回
-	bl, err := blob.New(filepath.Join(cfg.DataDir, "blobs"))
-	if err != nil {
-		return nil, err
-	}
-	bl.SetLocator(st.BlobLocation)
+	// 配置了 ARTIFACT_S3_* 时，artifact 文件直接写入 R2（即时上传，所有机器共用），
+	// 集群只复制数据库里的控制信息；没有配置时文件存本机，由机器之间互相推送。
 	libFS, _ := fs.Sub(assets.FS, "web/lib")
-	a := &app{cfg: cfg, store: st, blobs: bl, libFS: libFS}
+	a := &app{cfg: cfg, store: st, libFS: libFS}
+	var bl *blob.Store
 	if c, ok := r2Config(a); ok {
+		if bl, err = blob.NewS3(blob.S3Config{Endpoint: c.Endpoint, Bucket: c.Bucket, AccessKey: c.AccessKey,
+			SecretKey: c.SecretKey, Region: c.Region, Prefix: c.Prefix}); err != nil {
+			return nil, err
+		}
 		if a.r2, err = s3.New(c); err != nil {
 			return nil, err
 		}
-		bl.SetFetcher(a.r2.Get)
+	} else if bl, err = blob.New(filepath.Join(cfg.DataDir, "blobs")); err != nil {
+		return nil, err
 	}
-	a.svc = &artifact.Service{Store: st, Blobs: bl, Cfg: cfg, LibExists: httpapi.LibExists(libFS)}
+	bl.SetLocator(st.BlobLocation)
+	a.blobs = bl
+	a.svc = &artifact.Service{Store: st, Blobs: bl, Cfg: cfg, LibExists: httpapi.LibExists(libFS), SharedBlobs: a.r2 != nil}
 	return a, nil
 }
 
@@ -330,8 +334,8 @@ func housekeeping(a *app, isWriter func() bool) {
 		if n, freed, err := a.svc.GC(w); err == nil && n > 0 {
 			slog.Info("清理无引用文件", "files", n, "freed", auth.FormatBytes(freed))
 		}
-		// 每 6 小时检查一次本机文件是否完整，缺失的从其他机器或 R2 取回
-		if runs%6 == 0 {
+		// 文件存本机时，每 6 小时检查一次是否完整，缺失的从其他机器取回
+		if a.r2 == nil && runs%6 == 0 {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 			if n, err := a.svc.Repair(ctx); n > 0 || err != nil {
 				slog.Info("补齐本机缺失的文件", "files", n, "err", err)

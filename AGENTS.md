@@ -4,8 +4,8 @@
 
 - `cmd/artifactd`：入口与命令行；`cluster.go` 是多机接入（集群节点、文件推送/拉取、写请求转发、R2 备份）。
 - `internal/store`：SQLite 访问。**所有写入必须经过 `s.Exec` 或 `s.Tx`**（`replicate.go`），不要直接 `s.DB.Exec`，否则多机时不会同步。SQL 里不要用 `datetime('now')`、`random()` 等非确定性函数，时间和 ID 在 Go 里生成后作为参数传入。
-- `internal/blob`：文件存本机 `<artifact_id>/v<版本>/<路径>`；本机缺失时经 fetcher 从其他机器或 R2 取回。
-- `internal/artifact`：发布、版本、GC。发布时先写文件、`Replicate` 推送给其他机器，再提交元数据。
+- `internal/blob`：文件按 `<artifact_id>/v<版本>/<路径>` 存放。配置了 R2 时直接存 R2（所有机器共用，集群只复制数据库）；否则存本机，经 `Replicate` 推送给其他机器、缺失时经 fetcher 取回。
+- `internal/artifact`：发布、版本、GC。R2 模式下只有写节点清理文件。
 - 集群复制逻辑在公开库 `github.com/JDLu2003/vps-cluster`。
 
 ## 规则

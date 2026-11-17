@@ -46,6 +46,8 @@ type Service struct {
 	Replicate func(ctx context.Context, keys []string) error
 	// GCMinAge：多机时文件先于元数据到达其他机器，比它新的无引用文件先不删（单机为 0）。
 	GCMinAge time.Duration
+	// SharedBlobs：文件在所有机器共用的 R2 上，只有写节点可以清理文件。
+	SharedBlobs bool
 
 	gcMu  sync.RWMutex // 发布时读锁，GC 时写锁，避免刚写入的对象被回收
 	pubMu sync.Mutex   // 串行化“写对象 + 写数据库”，避免并发发布互相覆盖同一版本的对象
@@ -734,6 +736,9 @@ func (s *Service) GC(writer bool) (int, int64, error) {
 				s.Store.Audit(nil, nil, "", "artifact.purge", id, "回收站到期自动清理")
 			}
 		}
+	}
+	if s.SharedBlobs && !writer {
+		return 0, 0, nil
 	}
 	s.gcMu.Lock()
 	defer s.gcMu.Unlock()

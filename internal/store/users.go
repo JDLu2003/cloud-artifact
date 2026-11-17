@@ -162,7 +162,7 @@ func (s *Store) CreateUser(n NewUser) (*User, error) {
 	if n.Role == "" {
 		n.Role = "user"
 	}
-	res, err := s.DB.Exec(`INSERT INTO users(name,display_name,password_hash,role,note,created_at) VALUES(?,?,?,?,?,?)`,
+	res, err := s.Exec(`INSERT INTO users(name,display_name,password_hash,role,note,created_at) VALUES(?,?,?,?,?,?)`,
 		strings.TrimSpace(n.Name), n.DisplayName, n.PasswordHash, n.Role, n.Note, now())
 	if err != nil {
 		if strings.Contains(err.Error(), "UNIQUE") {
@@ -227,15 +227,15 @@ func (s *Store) UpdateUser(id int64, p UserPatch) error {
 		return nil
 	}
 	args = append(args, id)
-	_, err := s.DB.Exec(`UPDATE users SET `+strings.Join(sets, ",")+` WHERE id=?`, args...)
+	_, err := s.Exec(`UPDATE users SET `+strings.Join(sets, ",")+` WHERE id=?`, args...)
 	return err
 }
 
 func (s *Store) SetPassword(id int64, hash string) error {
-	_, err := s.DB.Exec(`UPDATE users SET password_hash=? WHERE id=?`, hash, id)
+	_, err := s.Exec(`UPDATE users SET password_hash=? WHERE id=?`, hash, id)
 	if err == nil {
 		// 改密码后让所有旧会话失效
-		_, err = s.DB.Exec(`DELETE FROM sessions WHERE user_id=?`, id)
+		_, err = s.Exec(`DELETE FROM sessions WHERE user_id=?`, id)
 	}
 	return err
 }
@@ -248,7 +248,7 @@ func (s *Store) CountAdmins() (int64, error) {
 
 // DeleteUser 删除用户及其密钥、会话。调用方需先清理该用户的 artifact。
 func (s *Store) DeleteUser(id int64) error {
-	_, err := s.DB.Exec(`DELETE FROM users WHERE id=?`, id)
+	_, err := s.Exec(`DELETE FROM users WHERE id=?`, id)
 	return err
 }
 

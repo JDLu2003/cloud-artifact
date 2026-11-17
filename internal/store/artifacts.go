@@ -174,19 +174,19 @@ func escapeLike(s string) string {
 
 // ---- 写入（在事务中调用） ----
 
-func InsertArtifact(tx *sql.Tx, a *Artifact) error {
+func InsertArtifact(tx *Tx, a *Artifact) error {
 	_, err := tx.Exec(`INSERT INTO artifacts(id,owner_id,title,description,kind,entry,visibility,current_version,size_bytes,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
 		a.ID, a.OwnerID, a.Title, a.Description, a.Kind, a.Entry, a.Visibility, a.CurrentVersion, a.SizeBytes, a.CreatedAt, a.UpdatedAt)
 	return err
 }
 
-func UpdateArtifactHead(tx *sql.Tx, a *Artifact) error {
+func UpdateArtifactHead(tx *Tx, a *Artifact) error {
 	_, err := tx.Exec(`UPDATE artifacts SET title=?,description=?,kind=?,entry=?,visibility=?,current_version=?,size_bytes=?,updated_at=? WHERE id=?`,
 		a.Title, a.Description, a.Kind, a.Entry, a.Visibility, a.CurrentVersion, a.SizeBytes, a.UpdatedAt, a.ID)
 	return err
 }
 
-func InsertVersion(tx *sql.Tx, v *Version, files []VersionFile) error {
+func InsertVersion(tx *Tx, v *Version, files []VersionFile) error {
 	if _, err := tx.Exec(`INSERT INTO versions(artifact_id,number,message,source,entry,author_user_id,author_key_id,total_size,file_count,warnings,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
 		v.ArtifactID, v.Number, v.Message, v.Source, v.Entry, v.AuthorUserID, v.AuthorKeyID, v.TotalSize, v.FileCount, v.Warnings, v.CreatedAt); err != nil {
 		return err
@@ -202,7 +202,7 @@ func InsertVersion(tx *sql.Tx, v *Version, files []VersionFile) error {
 	return nil
 }
 
-func UpsertFTS(tx *sql.Tx, id, title, desc, body string) error {
+func UpsertFTS(tx *Tx, id, title, desc, body string) error {
 	if _, err := tx.Exec(`DELETE FROM artifacts_fts WHERE id=?`, id); err != nil {
 		return err
 	}
@@ -211,7 +211,7 @@ func UpsertFTS(tx *sql.Tx, id, title, desc, body string) error {
 }
 
 // PruneVersions 删除超出保留数量的最旧版本（不删当前版本）。
-func PruneVersions(tx *sql.Tx, artifactID string, keep int64) error {
+func PruneVersions(tx *Tx, artifactID string, keep int64) error {
 	if keep <= 0 {
 		return nil
 	}
@@ -243,28 +243,28 @@ func (s *Store) UpdateMeta(id string, title, desc, visibility *string, ownerID *
 	}
 	sets = append(sets, "updated_at=?")
 	args = append(args, now(), id)
-	if _, err := s.DB.Exec(`UPDATE artifacts SET `+strings.Join(sets, ",")+` WHERE id=?`, args...); err != nil {
+	if _, err := s.Exec(`UPDATE artifacts SET `+strings.Join(sets, ",")+` WHERE id=?`, args...); err != nil {
 		return err
 	}
 	if title != nil || desc != nil {
-		s.DB.Exec(`UPDATE artifacts_fts SET title=(SELECT title FROM artifacts WHERE id=?), description=(SELECT description FROM artifacts WHERE id=?) WHERE id=?`, id, id, id)
+		s.Exec(`UPDATE artifacts_fts SET title=(SELECT title FROM artifacts WHERE id=?), description=(SELECT description FROM artifacts WHERE id=?) WHERE id=?`, id, id, id)
 	}
 	return nil
 }
 
 func (s *Store) SoftDelete(id string) error {
-	_, err := s.DB.Exec(`UPDATE artifacts SET deleted_at=? WHERE id=? AND deleted_at IS NULL`, now(), id)
+	_, err := s.Exec(`UPDATE artifacts SET deleted_at=? WHERE id=? AND deleted_at IS NULL`, now(), id)
 	return err
 }
 
 func (s *Store) Undelete(id string) error {
-	_, err := s.DB.Exec(`UPDATE artifacts SET deleted_at=NULL, updated_at=? WHERE id=?`, now(), id)
+	_, err := s.Exec(`UPDATE artifacts SET deleted_at=NULL, updated_at=? WHERE id=?`, now(), id)
 	return err
 }
 
 // Purge 彻底删除 artifact 及其所有版本记录（blob 文件留给 GC）。
 func (s *Store) Purge(id string) error {
-	return s.Tx(nil, func(tx *sql.Tx) error {
+	return s.Tx(nil, func(tx *Tx) error {
 		if _, err := tx.Exec(`DELETE FROM artifacts_fts WHERE id=?`, id); err != nil {
 			return err
 		}
@@ -310,10 +310,6 @@ func (s *Store) ArtifactIDsByOwner(ownerID int64) []string {
 		ids = append(ids, id)
 	}
 	return ids
-}
-
-func (s *Store) IncViews(id string) {
-	s.DB.Exec(`UPDATE artifacts SET views=views+1 WHERE id=?`, id)
 }
 
 // ---- 版本 ----
@@ -431,7 +427,7 @@ func (s *Store) UnreferencedBlobs() ([]VersionFile, error) {
 }
 
 func (s *Store) DeleteBlobRow(sha string) error {
-	_, err := s.DB.Exec(`DELETE FROM blobs WHERE sha256=?`, sha)
+	_, err := s.Exec(`DELETE FROM blobs WHERE sha256=?`, sha)
 	return err
 }
 

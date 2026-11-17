@@ -5,7 +5,7 @@
 | 场景 | 做法 |
 |---|---|
 | 服务器内存 ≥ 2 GB | `docker compose up -d --build`，在容器里编译 |
-| 服务器内存 < 2 GB | 在另一台机器 `make linux`，把 `bin/` 一起传上去，`.env` 里设 `ARTIFACT_DOCKERFILE=Dockerfile.prebuilt` |
+| 服务器内存 < 2 GB | 直接使用 CI 构建的镜像 `ghcr.io/jdlu2003/cloud-artifact:latest`，无需本机编译 |
 | 不用 Docker | `make build` 后直接运行 `bin/artifactd serve`，用 systemd 托管 |
 
 编译纯 Go 的 SQLite（modernc.org/sqlite）峰值内存约 1.5–2 GB。在 1 GB 内存、没有 swap 的机器上编译，可能触发 OOM，连带影响同机的其他服务。

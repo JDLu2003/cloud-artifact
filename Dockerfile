@@ -18,7 +18,8 @@ RUN apk add --no-cache ca-certificates tzdata su-exec \
 COPY --from=build /out/artifactd /usr/local/bin/artifactd
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 ENV ARTIFACT_DATA_DIR=/data ARTIFACT_PORT=8790 TZ=Asia/Shanghai
-EXPOSE 8790
+# 8790：网页与 API；7947：集群端口（多机时）
+EXPOSE 8790 7947
 VOLUME /data
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
   CMD wget -qO- http://127.0.0.1:8790/healthz >/dev/null || exit 1

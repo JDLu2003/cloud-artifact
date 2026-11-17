@@ -15,6 +15,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // backend 是底层存储，本地目录和 S3 兼容对象存储（如 Cloudflare R2）各有一种实现。键以 / 分隔。
@@ -60,6 +61,47 @@ func validKey(key string) error {
 type Store struct {
 	b      backend
 	locate func(sha string) (Loc, bool)
+	fetch  func(key string) ([]byte, error) // 本地缺失时从别处（其他机器、R2 备份）取回
+}
+
+// SetFetcher 设置本地缺失时的取回函数；取回的内容会写入本地。
+func (s *Store) SetFetcher(fn func(key string) ([]byte, error)) { s.fetch = fn }
+
+// readThrough 先读本地，缺失时尝试取回并保存。
+func (s *Store) readThrough(key string) ([]byte, error) {
+	b, err := s.b.read(key)
+	if err == nil || !errors.Is(err, os.ErrNotExist) || s.fetch == nil {
+		return b, err
+	}
+	b, ferr := s.fetch(key)
+	if ferr != nil {
+		return nil, os.ErrNotExist
+	}
+	if validKey(key) == nil {
+		_ = s.b.put(key, b)
+	}
+	return b, nil
+}
+
+// ReadLocal 只读本地，不尝试取回（供其他机器拉取时使用，避免互相转发形成环路）。
+func (s *Store) ReadLocal(key string) ([]byte, error) {
+	if err := validKey(key); err != nil {
+		return nil, err
+	}
+	return s.b.read(key)
+}
+
+// Age 返回本地文件的存在时长；后端不支持或文件不存在时 ok=false。
+func (s *Store) Age(key string) (time.Duration, bool) {
+	l, ok := s.b.(*localBackend)
+	if !ok {
+		return 0, false
+	}
+	fi, err := os.Stat(l.path(key))
+	if err != nil {
+		return 0, false
+	}
+	return time.Since(fi.ModTime()), true
 }
 
 // SetLocator 设置按 sha256 查文件位置的函数（由数据库提供）。
@@ -87,11 +129,19 @@ func (s *Store) PutAt(l Loc, data []byte) error {
 	return s.b.put(l.Key(), data)
 }
 
+// PutKey 按对象键写入（其他机器推送文件时使用）。
+func (s *Store) PutKey(key string, data []byte) error {
+	if err := validKey(key); err != nil {
+		return err
+	}
+	return s.b.put(key, data)
+}
+
 // HasKey 判断对象是否存在。
 func (s *Store) HasKey(key string) bool { return s.b.has(key) }
 
 // ReadKey 按对象键读取。
-func (s *Store) ReadKey(key string) ([]byte, error) { return s.b.read(key) }
+func (s *Store) ReadKey(key string) ([]byte, error) { return s.readThrough(key) }
 
 // Read 按内容的 sha256 读取文件。
 func (s *Store) Read(sha string) ([]byte, error) {
@@ -102,7 +152,7 @@ func (s *Store) Read(sha string) ([]byte, error) {
 	if !ok {
 		return nil, os.ErrNotExist
 	}
-	return s.b.read(l.Key())
+	return s.readThrough(l.Key())
 }
 
 // DeleteKey 删除一个对象；不存在时不报错。

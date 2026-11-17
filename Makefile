@@ -1,7 +1,13 @@
 VERSION ?= 0.1.0
 LDFLAGS := -s -w -X main.Version=$(VERSION)
 
-.PHONY: build run test vet linux docker clean
+.PHONY: check build run test vet linux docker clean
+
+# 本地与 CI 运行同一条检查命令
+check:
+	@test -z "$$(gofmt -l .)" || (echo "以下文件需要 gofmt:"; gofmt -l .; exit 1)
+	go vet ./...
+	go test -race -count=1 ./...
 
 build:
 	CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -o bin/artifactd ./cmd/artifactd

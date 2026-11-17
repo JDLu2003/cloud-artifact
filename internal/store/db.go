@@ -22,6 +22,9 @@ type Store struct {
 
 	settingsMu    sync.RWMutex
 	settingsCache *Settings
+
+	rep    replication
+	cancel context.CancelFunc
 }
 
 func now() int64 { return time.Now().Unix() }
@@ -45,10 +48,23 @@ func Open(dataDir string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("数据库迁移失败：%w", err)
 	}
+	if err := s.loadApplied(); err != nil {
+		db.Close()
+		return nil, err
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	s.cancel = cancel
+	go s.flushLoop(ctx)
 	return s, nil
 }
 
-func (s *Store) Close() error { return s.DB.Close() }
+func (s *Store) Close() error {
+	s.cancel()
+	fctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	s.FlushPending(fctx)
+	cancel()
+	return s.DB.Close()
+}
 
 var migrations = []string{
 	// v1
@@ -180,22 +196,6 @@ func (s *Store) migrate() error {
 	return nil
 }
 
-// Tx 在一个写事务中执行 fn。
-func (s *Store) Tx(ctx context.Context, fn func(*sql.Tx) error) error {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	tx, err := s.DB.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	if err := fn(tx); err != nil {
-		tx.Rollback()
-		return err
-	}
-	return tx.Commit()
-}
-
 // KV 读写简单键值（服务密钥、设置等）。
 func (s *Store) GetKV(key string) (string, error) {
 	var v string
@@ -207,7 +207,7 @@ func (s *Store) GetKV(key string) (string, error) {
 }
 
 func (s *Store) SetKV(key, value string) error {
-	_, err := s.DB.Exec(`INSERT INTO kv(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, key, value)
+	_, err := s.Exec(`INSERT INTO kv(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, key, value)
 	return err
 }
 

@@ -30,16 +30,17 @@ docker compose logs artifact
 
 把第 2 项整段粘贴给 agent 即可。之后对它说“把这份调研整理成一页报告发给我”，它会返回一个 `http://你的地址/a/xxxxxxxxxx` 形式的链接。
 
-### 小内存服务器
+### 预构建镜像与多机部署
 
-镜像默认在容器里编译，编译纯 Go 的 SQLite 需要约 2 GB 内存。内存不足 2 GB 的服务器，在另一台有 Go 1.26 的机器上交叉编译，再用预编译方式构建：
+`main` 分支的每次提交都会由 CI 构建 `ghcr.io/jdlu2003/cloud-artifact:latest`（amd64/arm64），小内存服务器无需本地编译。
 
-```bash
-make linux                       # 生成 bin/artifactd-linux-amd64 和 -arm64
-# 把整个目录（含 bin/）传到服务器后：
-echo 'ARTIFACT_DOCKERFILE=Dockerfile.prebuilt' >> .env
-docker compose up -d --build
-```
+多机部署由 VPS 面板（vpnmgr）统一管理：在面板「机器」页勾选某台机器「运行 artifact」，该机器上的 agent 会写入 `.env` 并启动容器，自动加入 artifact 集群。机器数决定同步方式：1 台单机、2 台主备、3 台及以上 Raft。
+
+- 任意一台都能访问和发布；修改类请求自动转给写节点执行。
+- 发布时文件先推送给其他机器（Raft 下需多数机器收到），再提交元数据；某台机器缺文件时会自动从其他机器或 R2 取回。
+- R2 只用于备份（见 `.env.example` 的 `ARTIFACT_S3_*`）：有写入后 1 分钟内上传数据库快照和新文件，快照按小时保留 48 份。
+- 集群模式下命令行的写操作（`user`、`key`、`prompt`、`gc`）会被拒绝，请在管理后台操作。
+- 没有域名时，agent 配置里写的是某一台机器的地址；那台机器整机宕机时，把技能配置里的服务地址改成另一台即可。
 
 ## 不用 Docker
 
@@ -173,7 +174,7 @@ tar czf artifact-backup.tgz data/backup.db data/blobs && rm data/backup.db
 
 ### 升级
 
-拉取新代码后 `docker compose up -d --build`。数据库迁移在启动时自动执行。
+使用 GHCR 镜像的机器由 agent 每 10 分钟自动拉取新镜像；自行构建的部署拉取新代码后 `docker compose up -d --build`。数据库迁移在启动时自动执行。
 
 ### HTTPS
 
@@ -194,6 +195,7 @@ tar czf artifact-backup.tgz data/backup.db data/blobs && rm data/backup.db
 make test        # 单元测试和接口测试
 make build       # 本机构建
 make linux       # 交叉编译 linux/amd64 与 linux/arm64
+make check       # gofmt + vet + test -race（CI 运行同一条命令）
 ```
 
 目录结构：

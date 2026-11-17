@@ -3,7 +3,6 @@ package artifact
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"path"
@@ -41,6 +40,12 @@ type Service struct {
 	Cfg       *config.Config
 	Signer    *auth.Signer
 	LibExists func(string) bool
+
+	// Replicate 在元数据提交前把新写入的文件推送给其他机器（多机时由 main 设置）；
+	// 返回错误表示副本数不足，本次发布失败。
+	Replicate func(ctx context.Context, keys []string) error
+	// GCMinAge：多机时文件先于元数据到达其他机器，比它新的无引用文件先不删（单机为 0）。
+	GCMinAge time.Duration
 
 	gcMu  sync.RWMutex // 发布时读锁，GC 时写锁，避免刚写入的对象被回收
 	pubMu sync.Mutex   // 串行化“写对象 + 写数据库”，避免并发发布互相覆盖同一版本的对象
@@ -389,10 +394,16 @@ func (s *Service) Publish(ctx context.Context, in PublishInput) (*PublishResult,
 		}
 		written = append(written, loc.Key())
 	}
+	if s.Replicate != nil {
+		if err := s.Replicate(ctx, written); err != nil {
+			cleanup()
+			return nil, errf(503, "replicate_failed", "文件同步到其他机器失败：%v", err)
+		}
+	}
 	errs, _, _ := lint.Summary(warnings)
 	nowTS := time.Now().Unix()
 	body := searchText(kind, texts[entry])
-	err = s.Store.Tx(ctx, func(tx *sql.Tx) error {
+	err = s.Store.Tx(ctx, func(tx *store.Tx) error {
 		if art == nil {
 			art = &store.Artifact{ID: artID, OwnerID: owner.ID, CreatedAt: nowTS}
 			res.Created = true
@@ -714,11 +725,14 @@ func (s *Service) UpdateMeta(a Actor, id string, p MetaPatch) (*store.Artifact, 
 }
 
 // GC 删除没有任何版本引用的对象，并清理过期回收站。
-func (s *Service) GC() (int, int64, error) {
-	st := s.Store.Settings()
-	for _, id := range s.Store.ExpiredTrash(st.TrashDays) {
-		if err := s.Store.Purge(id); err == nil {
-			s.Store.Audit(nil, nil, "", "artifact.purge", id, "回收站到期自动清理")
+// GC 清理过期回收站与无引用文件。writer 为 false 时（非写节点）只清理本机文件，不改数据库。
+func (s *Service) GC(writer bool) (int, int64, error) {
+	if writer {
+		st := s.Store.Settings()
+		for _, id := range s.Store.ExpiredTrash(st.TrashDays) {
+			if err := s.Store.Purge(id); err == nil {
+				s.Store.Audit(nil, nil, "", "artifact.purge", id, "回收站到期自动清理")
+			}
 		}
 	}
 	s.gcMu.Lock()
@@ -738,15 +752,41 @@ func (s *Service) GC() (int, int64, error) {
 		if !blob.IsArtifactKey(k) || live[k] {
 			continue
 		}
+		if age, ok := s.Blobs.Age(k); ok && age < s.GCMinAge {
+			continue
+		}
 		if err := s.Blobs.DeleteKey(k); err != nil {
 			continue
 		}
 		n++
 	}
-	if bl, err := s.Store.UnreferencedBlobs(); err == nil {
-		for _, b := range bl {
-			s.Store.DeleteBlobRow(b.SHA256)
+	if writer {
+		if bl, err := s.Store.UnreferencedBlobs(); err == nil {
+			for _, b := range bl {
+				s.Store.DeleteBlobRow(b.SHA256)
+			}
 		}
 	}
 	return n, freed, nil
+}
+
+// Repair 检查数据库引用的文件是否都在本机，缺失的从其他机器或备份取回。返回补回的数量。
+func (s *Service) Repair(ctx context.Context) (int, error) {
+	live, err := s.Store.LiveFileKeys()
+	if err != nil {
+		return 0, err
+	}
+	n := 0
+	for k := range live {
+		if ctx.Err() != nil {
+			return n, ctx.Err()
+		}
+		if s.Blobs.HasKey(k) {
+			continue
+		}
+		if _, err := s.Blobs.ReadKey(k); err == nil {
+			n++
+		}
+	}
+	return n, nil
 }

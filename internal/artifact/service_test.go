@@ -133,7 +133,7 @@ func TestPublishLifecycle(t *testing.T) {
 	if err := svc.Purge(a, r1.ID); err != nil {
 		t.Fatal(err)
 	}
-	n, _, err := svc.GC()
+	n, _, err := svc.GC(true)
 	if err != nil || n == 0 {
 		t.Fatalf("gc should remove blobs: n=%d err=%v", n, err)
 	}
@@ -251,7 +251,7 @@ func TestObjectLayoutAndGC(t *testing.T) {
 	if err := svc.Store.Purge(r1.ID); err != nil {
 		t.Fatal(err)
 	}
-	if n, _, err := svc.GC(); err != nil || n != 4 {
+	if n, _, err := svc.GC(true); err != nil || n != 4 {
 		t.Fatalf("GC = %d, %v", n, err)
 	}
 	if svc.Blobs.HasKey(r1.ID + "/v1/index.html") {

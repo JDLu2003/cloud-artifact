@@ -49,7 +49,7 @@ func scanKey(r scanner) (*APIKey, error) {
 }
 
 func (s *Store) CreateKey(userID int64, name, prefix, hash string, expiresAt *int64) (*APIKey, error) {
-	res, err := s.DB.Exec(`INSERT INTO api_keys(user_id,name,prefix,hash,created_at,expires_at) VALUES(?,?,?,?,?,?)`,
+	res, err := s.Exec(`INSERT INTO api_keys(user_id,name,prefix,hash,created_at,expires_at) VALUES(?,?,?,?,?,?)`,
 		userID, name, prefix, hash, now(), expiresAt)
 	if err != nil {
 		return nil, err
@@ -100,12 +100,8 @@ func (s *Store) ListKeys(userID int64) ([]APIKey, error) {
 }
 
 func (s *Store) RevokeKey(id int64) error {
-	_, err := s.DB.Exec(`UPDATE api_keys SET revoked_at=? WHERE id=? AND revoked_at IS NULL`, now(), id)
+	_, err := s.Exec(`UPDATE api_keys SET revoked_at=? WHERE id=? AND revoked_at IS NULL`, now(), id)
 	return err
-}
-
-func (s *Store) TouchKey(id int64, ip string) {
-	s.DB.Exec(`UPDATE api_keys SET last_used_at=?, last_ip=? WHERE id=?`, now(), ip, id)
 }
 
 func (s *Store) CountActiveKeys() int64 {
@@ -125,7 +121,7 @@ func (s *Store) CreateSession(hash string, userID int64, expiresAt int64, ip, ua
 	if len(ua) > 300 {
 		ua = ua[:300]
 	}
-	_, err := s.DB.Exec(`INSERT INTO sessions(hash,user_id,created_at,expires_at,ip,ua) VALUES(?,?,?,?,?,?)`, hash, userID, now(), expiresAt, ip, ua)
+	_, err := s.Exec(`INSERT INTO sessions(hash,user_id,created_at,expires_at,ip,ua) VALUES(?,?,?,?,?,?)`, hash, userID, now(), expiresAt, ip, ua)
 	return err
 }
 
@@ -139,10 +135,10 @@ func (s *Store) SessionByHash(hash string) (*Session, error) {
 }
 
 func (s *Store) DeleteSession(hash string) error {
-	_, err := s.DB.Exec(`DELETE FROM sessions WHERE hash=?`, hash)
+	_, err := s.Exec(`DELETE FROM sessions WHERE hash=?`, hash)
 	return err
 }
 
 func (s *Store) PurgeExpiredSessions() {
-	s.DB.Exec(`DELETE FROM sessions WHERE expires_at < ?`, now())
+	s.Exec(`DELETE FROM sessions WHERE expires_at < ?`, now())
 }

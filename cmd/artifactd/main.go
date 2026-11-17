@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -30,6 +31,8 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/JDLu2003/vps-cluster"
+	"github.com/JDLu2003/vps-cluster/s3"
 	assets "vps-artifact"
 	"vps-artifact/internal/artifact"
 	"vps-artifact/internal/auth"
@@ -37,6 +40,7 @@ import (
 	"vps-artifact/internal/config"
 	"vps-artifact/internal/httpapi"
 	"vps-artifact/internal/lint"
+
 	"vps-artifact/internal/metrics"
 	"vps-artifact/internal/skillpack"
 	"vps-artifact/internal/store"
@@ -110,11 +114,7 @@ type app struct {
 	signer *auth.Signer
 	svc    *artifact.Service
 	libFS  fs.FS
-}
-
-func s3Config(cfg *config.Config) blob.S3Config {
-	return blob.S3Config{Endpoint: cfg.S3Endpoint, Bucket: cfg.S3Bucket, AccessKey: cfg.S3AccessKey,
-		SecretKey: cfg.S3SecretKey, Region: cfg.S3Region, Prefix: cfg.S3Prefix}
+	r2     *s3.Client // 可选：R2 只用于备份和取回缺失文件
 }
 
 func open() (*app, error) {
@@ -126,32 +126,58 @@ func open() (*app, error) {
 	if err != nil {
 		return nil, err
 	}
-	var bl *blob.Store
-	if cfg.S3Enabled() {
-		bl, err = blob.NewS3(s3Config(cfg))
-	} else {
-		bl, err = blob.New(filepath.Join(cfg.DataDir, "blobs"))
-	}
+	// 文件内容始终存本机；配置了 ARTIFACT_S3_* 时 R2 用于备份，并在本机缺失时取回
+	bl, err := blob.New(filepath.Join(cfg.DataDir, "blobs"))
 	if err != nil {
 		return nil, err
 	}
 	bl.SetLocator(st.BlobLocation)
-	secret := cfg.Secret
-	if secret == "" {
-		secret, err = st.GetKV("secret")
-		if errors.Is(err, store.ErrNotFound) {
-			secret = auth.RandomString(48)
-			if err := st.SetKV("secret", secret); err != nil {
-				return nil, err
-			}
-		} else if err != nil {
+	libFS, _ := fs.Sub(assets.FS, "web/lib")
+	a := &app{cfg: cfg, store: st, blobs: bl, libFS: libFS}
+	if c, ok := r2Config(a); ok {
+		if a.r2, err = s3.New(c); err != nil {
 			return nil, err
 		}
+		bl.SetFetcher(a.r2.Get)
 	}
-	libFS, _ := fs.Sub(assets.FS, "web/lib")
-	signer := auth.NewSigner(secret)
-	svc := &artifact.Service{Store: st, Blobs: bl, Cfg: cfg, Signer: signer, LibExists: httpapi.LibExists(libFS)}
-	return &app{cfg: cfg, store: st, blobs: bl, signer: signer, svc: svc, libFS: libFS}, nil
+	a.svc = &artifact.Service{Store: st, Blobs: bl, Cfg: cfg, LibExists: httpapi.LibExists(libFS)}
+	return a, nil
+}
+
+// initSecret 读取（首次时生成）签名密钥。集群模式下密钥保存在复制的数据库里，所有机器一致。
+func initSecret(a *app) error {
+	secret := a.cfg.Secret
+	if secret == "" {
+		var err error
+		secret, err = a.store.GetKV("secret")
+		if errors.Is(err, store.ErrNotFound) {
+			secret = auth.RandomString(48)
+			if err := a.store.SetKV("secret", secret); err != nil {
+				return err
+			}
+		} else if err != nil {
+			return err
+		}
+	}
+	a.signer = auth.NewSigner(secret)
+	a.svc.Signer = a.signer
+	return nil
+}
+
+// openCLI 供命令行子命令使用。集群模式下命令行直接写本机数据库会让副本分叉，因此拒绝写操作。
+func openCLI(write bool) (*app, error) {
+	if write && clusterEnabled() {
+		return nil, errors.New("集群模式下请在管理后台操作（命令行写入不会同步到其他机器）")
+	}
+	a, err := open()
+	if err != nil {
+		return nil, err
+	}
+	if err := initSecret(a); err != nil {
+		a.store.Close()
+		return nil, err
+	}
+	return a, nil
 }
 
 func serve() error {
@@ -160,6 +186,19 @@ func serve() error {
 		return err
 	}
 	defer a.store.Close()
+	var node *cluster.Node
+	isWriter := func() bool { return true }
+	if clusterEnabled() {
+		if node, err = startCluster(a); err != nil {
+			return err
+		}
+		defer node.Close()
+		isWriter = node.IsWriter
+		waitReady(node, a)
+	}
+	if err := initSecret(a); err != nil {
+		return err
+	}
 	skillFS, _ := fs.Sub(assets.FS, "skill/artifact")
 	pack, err := skillpack.New(skillFS)
 	if err != nil {
@@ -174,14 +213,35 @@ func serve() error {
 	if err := srv.Init(); err != nil {
 		return err
 	}
-	if err := bootstrap(a, srv); err != nil {
-		return err
+	if isWriter() {
+		if err := bootstrap(a, srv); err != nil {
+			return err
+		}
 	}
-	go housekeeping(a)
+	go housekeeping(a, isWriter)
+	bk := newBackup(a, isWriter)
+	a.store.OnApply(bk.Changed)
+	bkCtx, bkStop := context.WithCancel(context.Background())
+	defer bkStop()
+	go bk.Run(bkCtx)
+
+	handler := srv.Handler()
+	if node != nil {
+		node.SetForwardHandler(handler)
+		handler = forwardWrites(node, handler, func(r *http.Request) string {
+			if a.cfg.TrustProxy {
+				if xff := strings.TrimSpace(strings.Split(r.Header.Get("X-Forwarded-For"), ",")[0]); xff != "" {
+					return xff
+				}
+			}
+			host, _, _ := net.SplitHostPort(r.RemoteAddr)
+			return host
+		})
+	}
 
 	hs := &http.Server{
 		Addr:              a.cfg.Addr,
-		Handler:           srv.Handler(),
+		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       2 * time.Minute,
 		WriteTimeout:      2 * time.Minute,
@@ -258,14 +318,27 @@ func bootstrap(a *app, srv *httpapi.Server) error {
 	return nil
 }
 
-func housekeeping(a *app) {
+func housekeeping(a *app, isWriter func() bool) {
 	t := time.NewTicker(time.Hour)
+	runs := 0
 	run := func() {
-		a.store.PurgeExpiredSessions()
-		a.store.TrimAudit(50000)
-		if n, freed, err := a.svc.GC(); err == nil && n > 0 {
+		w := isWriter()
+		if w {
+			a.store.PurgeExpiredSessions()
+			a.store.TrimAudit(50000)
+		}
+		if n, freed, err := a.svc.GC(w); err == nil && n > 0 {
 			slog.Info("清理无引用文件", "files", n, "freed", auth.FormatBytes(freed))
 		}
+		// 每 6 小时检查一次本机文件是否完整，缺失的从其他机器或 R2 取回
+		if runs%6 == 0 {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+			if n, err := a.svc.Repair(ctx); n > 0 || err != nil {
+				slog.Info("补齐本机缺失的文件", "files", n, "err", err)
+			}
+			cancel()
+		}
+		runs++
 	}
 	time.Sleep(time.Minute)
 	run()
@@ -280,7 +353,7 @@ func cmdUser(args []string) error {
 	if len(args) == 0 {
 		return errors.New("用法：artifactd user add|list|passwd ...")
 	}
-	a, err := open()
+	a, err := openCLI(true)
 	if err != nil {
 		return err
 	}
@@ -365,7 +438,7 @@ func cmdKey(args []string) error {
 	if len(args) == 0 {
 		return errors.New("用法：artifactd key issue|list|revoke ...")
 	}
-	a, err := open()
+	a, err := openCLI(true)
 	if err != nil {
 		return err
 	}
@@ -440,7 +513,7 @@ func cmdPrompt(args []string) error {
 	if len(args) < 1 {
 		return errors.New("用法：artifactd prompt <用户名>")
 	}
-	a, err := open()
+	a, err := openCLI(true)
 	if err != nil {
 		return err
 	}
@@ -519,12 +592,12 @@ func cmdCheck(args []string) error {
 }
 
 func cmdGC() error {
-	a, err := open()
+	a, err := openCLI(true)
 	if err != nil {
 		return err
 	}
 	defer a.store.Close()
-	n, freed, err := a.svc.GC()
+	n, freed, err := a.svc.GC(true)
 	if err != nil {
 		return err
 	}
@@ -536,7 +609,7 @@ func cmdBackup(args []string) error {
 	if len(args) < 1 {
 		return errors.New("用法：artifactd backup <目标文件>，例如 /data/backup.db")
 	}
-	a, err := open()
+	a, err := openCLI(false)
 	if err != nil {
 		return err
 	}
@@ -556,7 +629,7 @@ func cmdBackup(args []string) error {
 // 已存在的对象会跳过，可重复执行。加 --purge-legacy 会在迁移成功后删除目标存储里旧布局的对象。
 func cmdMigrateBlobs(args []string) error {
 	purge := len(args) > 0 && args[0] == "--purge-legacy"
-	a, err := open()
+	a, err := openCLI(true)
 	if err != nil {
 		return err
 	}

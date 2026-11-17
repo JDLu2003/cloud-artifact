@@ -62,6 +62,13 @@ func (s *Store) Settings() Settings {
 	return st
 }
 
+// invalidateSettings 在状态机执行后清掉缓存（设置可能被其他机器修改）。
+func (s *Store) invalidateSettings() {
+	s.settingsMu.Lock()
+	s.settingsCache = nil
+	s.settingsMu.Unlock()
+}
+
 func (s *Store) SaveSettings(st Settings) error {
 	if err := st.Validate(); err != nil {
 		return err

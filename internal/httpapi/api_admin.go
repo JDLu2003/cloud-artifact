@@ -486,7 +486,7 @@ func (s *Server) adminUserPatch(w http.ResponseWriter, r *http.Request, a artifa
 		return
 	}
 	if p.Disabled != nil && *p.Disabled {
-		s.Store.DB.Exec(`DELETE FROM sessions WHERE user_id=?`, id)
+		s.Store.Exec(`DELETE FROM sessions WHERE user_id=?`, id)
 	}
 	s.Store.Audit(&a.User.ID, nil, a.IP, "user.update", u.Name, "")
 	nu, _ := s.Store.UserByID(id)
@@ -549,7 +549,7 @@ func (s *Server) adminUserDelete(w http.ResponseWriter, r *http.Request, a artif
 		return
 	}
 	s.Store.Audit(&a.User.ID, nil, a.IP, "user.delete", u.Name, fmt.Sprintf("同时删除 %d 个 artifact", len(ids)))
-	go s.Svc.GC()
+	go s.Svc.GC(true)
 	writeJSON(w, 200, map[string]any{"ok": true, "purged_artifacts": len(ids)})
 }
 
@@ -601,7 +601,7 @@ func (s *Server) adminAudit(w http.ResponseWriter, r *http.Request, a artifact.A
 }
 
 func (s *Server) adminGC(w http.ResponseWriter, r *http.Request, a artifact.Actor) {
-	n, freed, err := s.Svc.GC()
+	n, freed, err := s.Svc.GC(true)
 	if err != nil {
 		writeErr(w, err)
 		return

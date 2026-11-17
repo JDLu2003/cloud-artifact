@@ -18,7 +18,7 @@ func (s *Store) Audit(userID, keyID *int64, ip, action, target, detail string) {
 	if len(detail) > 2000 {
 		detail = detail[:2000]
 	}
-	s.DB.Exec(`INSERT INTO audit_log(ts,user_id,key_id,ip,action,target,detail) VALUES(?,?,?,?,?,?,?)`, now(), userID, keyID, ip, action, target, detail)
+	s.Exec(`INSERT INTO audit_log(ts,user_id,key_id,ip,action,target,detail) VALUES(?,?,?,?,?,?,?)`, now(), userID, keyID, ip, action, target, detail)
 }
 
 type AuditQuery struct {
@@ -68,5 +68,5 @@ func (s *Store) ListAudit(q AuditQuery) ([]AuditEntry, int64, error) {
 
 // TrimAudit 只保留最近 keep 条审计日志。
 func (s *Store) TrimAudit(keep int64) {
-	s.DB.Exec(`DELETE FROM audit_log WHERE id <= (SELECT id FROM audit_log ORDER BY id DESC LIMIT 1 OFFSET ?)`, keep)
+	s.Exec(`DELETE FROM audit_log WHERE id <= (SELECT id FROM audit_log ORDER BY id DESC LIMIT 1 OFFSET ?)`, keep)
 }

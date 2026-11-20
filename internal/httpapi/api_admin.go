@@ -115,7 +115,7 @@ func (s *Server) adminMe(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{
 		"user": userJSON(u), "csrf": s.Signer.CSRFToken(tok), "server": s.Cfg.PublicURL,
 		"version": s.Version, "allow_self_keys": st.AllowSelfKeys || u.IsAdmin(), "has_password": u.HasPassword,
-		"password_only": passwordOnly,
+		"password_only": passwordOnly, "skill_url": skillpack.PageURL(),
 	})
 }
 

@@ -476,9 +476,36 @@ def cmd_libs(a):
     print("\n在页面中直接用 <script src=\"/_lib/...\"> 引用，服务器本地提供，无需外网。")
 
 
+SKILL_REPO = "JDLu2003/cloud-artifact"  # 技能发布在这个 GitHub 仓库的 skill/artifact 目录
+SKILL_REF = "main"
+
+
+def github_skill_tarball():
+    """从 GitHub 下载仓库源码包，只取 skill/artifact，改写成以 artifact/ 开头的包。失败返回 None。"""
+    url = "https://codeload.github.com/%s/tar.gz/refs/heads/%s" % (SKILL_REPO, SKILL_REF)
+    prefix = "%s-%s/skill/" % (SKILL_REPO.split("/")[-1], SKILL_REF.replace("/", "-"))
+    try:
+        with urllib.request.urlopen(url, timeout=60) as r:
+            src = r.read()
+    except Exception as e:
+        print("从 GitHub 下载失败（%s），改用服务器上的技能包" % e, file=sys.stderr)
+        return None
+    out = io.BytesIO()
+    with tarfile.open(fileobj=io.BytesIO(src), mode="r:gz") as tin, tarfile.open(fileobj=out, mode="w:gz") as tout:
+        for m in tin.getmembers():
+            if not m.name.startswith(prefix + "artifact"):
+                continue
+            f = tin.extractfile(m) if m.isfile() else None
+            m.name = m.name[len(prefix):]
+            tout.addfile(m, f)
+    return out.getvalue()
+
+
 def cmd_self_update(a):
-    server, key = config()
-    data = request("GET", "/skill.tar.gz", raw=True, server=server, key=key)
+    data = github_skill_tarball()
+    if data is None:
+        server, key = config()
+        data = request("GET", "/skill.tar.gz", raw=True, server=server, key=key)
     parent = os.path.dirname(SKILL_DIR)
     with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as tf:
         for m in tf.getmembers():
@@ -498,7 +525,7 @@ def cmd_self_update(a):
             with tf.extractfile(m) as src, open(target, "wb") as dst:
                 dst.write(src.read())
             os.chmod(target, 0o755 if "/scripts/" in m.name else 0o644)
-    print("技能已更新到服务端最新版本：%s" % SKILL_DIR)
+    print("技能已更新到最新版本：%s" % SKILL_DIR)
 
 
 def main():

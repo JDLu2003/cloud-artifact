@@ -69,8 +69,8 @@ API Key：{API Key}
 1. 确定你的技能目录：pi 用 ~/.pi/agent/skills，Claude Code 用 ~/.claude/skills，Codex 用 ~/.codex/skills；其他 agent 按自己的文档确定。如果你没有技能机制，就用 ~/.artifact-skill，以后每次需要时先读其中的 SKILL.md。
 
 2. 下载并解压技能，完成后会有 <技能目录>/artifact/SKILL.md：
-   mkdir -p <技能目录> && (curl -fsSL {服务地址}/skill.tar.gz || curl -fsSL --noproxy '*' {服务地址}/skill.tar.gz) | tar -xz -C <技能目录>
-   第二个 curl 是在代理无法访问该地址时改为直连。
+   mkdir -p <技能目录> && curl -fsSL https://codeload.github.com/JDLu2003/cloud-artifact/tar.gz/refs/heads/main | tar -xz -C <技能目录> --strip-components=2 cloud-artifact-main/skill/artifact
+   GitHub 无法访问时可改用服务器上的同一份技能：curl -fsSL {服务地址}/skill.tar.gz | tar -xz -C <技能目录>
 
 3. 保存凭据并验证（凭据写入 ~/.config/artifact/config.json，权限 600）：
    python3 <技能目录>/artifact/scripts/artifact.py setup --server {服务地址} --key {API Key}

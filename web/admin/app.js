@@ -745,7 +745,7 @@ function Account({ me, onChange }) {
       </form><//>`}
       <${Panel} title="接入 agent">
         <p style="margin:0 0 10px">在<a href="#/keys">密钥页</a>签发一把密钥，页面会给出完整的接入提示词，粘贴给 agent 即可。</p>
-        <p class="muted" style="margin:0">技能包地址：<a class="mono" href="/skill.tar.gz">${me.server}/skill.tar.gz</a></p>
+        <p class="muted" style="margin:0">技能地址（GitHub）：<a class="mono" href=${me.skill_url} target="_blank" rel="noopener">${me.skill_url}</a></p>
       <//>
     </div>
   </div>`;

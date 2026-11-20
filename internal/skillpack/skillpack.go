@@ -127,12 +127,35 @@ func (p *Pack) Tarball(serverURL string) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
+// 技能的发布位置：GitHub 仓库里的 skill/artifact 目录（仓库是公开的）。
+// 由 main 按 ARTIFACT_SKILL_REPO / ARTIFACT_SKILL_REF 设置。
+var (
+	Repo = "JDLu2003/cloud-artifact"
+	Ref  = "main"
+)
+
+// PageURL 是技能目录在 GitHub 上的地址。
+func PageURL() string { return "https://github.com/" + Repo + "/tree/" + Ref + "/skill/artifact" }
+
+// TarballURL 是仓库源码包地址；解压时取 <仓库名>-<分支>/skill/artifact。
+func TarballURL() string { return "https://codeload.github.com/" + Repo + "/tar.gz/refs/heads/" + Ref }
+
+// tarballPrefix 是源码包里技能目录的上级路径（去掉它之后就是 artifact/...）。
+func tarballPrefix() string {
+	name := Repo
+	if i := strings.LastIndex(name, "/"); i >= 0 {
+		name = name[i+1:]
+	}
+	return name + "-" + strings.ReplaceAll(Ref, "/", "-") + "/skill/artifact"
+}
+
 // Prompt 生成交给 agent 的接入提示词。key 为空时用占位符。
 func Prompt(serverURL, key, userName string) string {
 	if key == "" {
 		key = "<在管理后台为你签发的 API Key>"
 	}
-	r := strings.NewReplacer("{URL}", serverURL, "{KEY}", key, "{USER}", userName)
+	r := strings.NewReplacer("{URL}", serverURL, "{KEY}", key, "{USER}", userName,
+		"{SKILL_TAR}", TarballURL(), "{SKILL_PAGE}", PageURL(), "{SKILL_PREFIX}", tarballPrefix())
 	return r.Replace(promptTemplate)
 }
 
@@ -146,9 +169,9 @@ API Key：{KEY}
 
 1. 确定你的技能目录：pi 用 ~/.pi/agent/skills，Claude Code 用 ~/.claude/skills，Codex 用 ~/.codex/skills；其他 agent 按自己的文档确定。如果你没有技能机制，就用 ~/.artifact-skill，以后每次需要时先读其中的 SKILL.md。
 
-2. 下载并解压技能，完成后会有 <技能目录>/artifact/SKILL.md：
-   mkdir -p <技能目录> && (curl -fsSL {URL}/skill.tar.gz || curl -fsSL --noproxy '*' {URL}/skill.tar.gz) | tar -xz -C <技能目录>
-   第二个 curl 是在代理无法访问该地址时改为直连。
+2. 从 GitHub 下载技能（{SKILL_PAGE}），完成后会有 <技能目录>/artifact/SKILL.md：
+   mkdir -p <技能目录> && curl -fsSL {SKILL_TAR} | tar -xz -C <技能目录> --strip-components=2 {SKILL_PREFIX}
+   GitHub 无法访问时改用服务器上的同一份技能：curl -fsSL {URL}/skill.tar.gz | tar -xz -C <技能目录>
 
 3. 保存凭据并验证（凭据写入 ~/.config/artifact/config.json，权限 600）：
    python3 <技能目录>/artifact/scripts/artifact.py setup --server {URL} --key {KEY}

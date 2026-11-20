@@ -102,22 +102,32 @@ func CheckPassword(hash, pw string) bool {
 // Signer 生成和校验内容访问令牌，令牌放在 URL 路径里，相对路径资源会自动带上。
 type Signer struct {
 	key []byte
+	// contentKey 由主密钥派生，只用于内容令牌。它交给 Cloudflare Worker 校验令牌，
+	// 即使泄露也不能伪造会话或 CSRF 令牌。
+	contentKey []byte
 }
 
 func NewSigner(secret string) *Signer {
-	return &Signer{key: []byte(secret)}
+	m := hmac.New(sha256.New, []byte(secret))
+	m.Write([]byte("content-token-key"))
+	return &Signer{key: []byte(secret), contentKey: m.Sum(nil)}
 }
 
-func (s *Signer) mac(parts ...string) string {
-	m := hmac.New(sha256.New, s.key)
+// ContentKey 返回内容令牌的签名密钥（base64url），用于配置 Worker。
+func (s *Signer) ContentKey() string { return base64.RawURLEncoding.EncodeToString(s.contentKey) }
+
+func macWith(key []byte, parts ...string) string {
+	m := hmac.New(sha256.New, key)
 	m.Write([]byte(strings.Join(parts, "|")))
 	return base64.RawURLEncoding.EncodeToString(m.Sum(nil)[:15])
 }
 
+func (s *Signer) mac(parts ...string) string { return macWith(s.key, parts...) }
+
 // ContentToken 生成访问 artifact 某个版本的令牌，形如 <过期时间>.<签名>。
 func (s *Signer) ContentToken(id string, version int, ttl time.Duration) string {
 	exp := strconv.FormatInt(time.Now().Add(ttl).Unix(), 36)
-	return exp + "." + s.mac("c", id, strconv.Itoa(version), exp)
+	return exp + "." + macWith(s.contentKey, "c", id, strconv.Itoa(version), exp)
 }
 
 func (s *Signer) VerifyContentToken(tok, id string, version int) bool {
@@ -129,7 +139,7 @@ func (s *Signer) VerifyContentToken(tok, id string, version int) bool {
 	if err != nil || time.Now().Unix() > t {
 		return false
 	}
-	want := s.mac("c", id, strconv.Itoa(version), exp)
+	want := macWith(s.contentKey, "c", id, strconv.Itoa(version), exp)
 	return subtle.ConstantTimeCompare([]byte(sig), []byte(want)) == 1
 }
 

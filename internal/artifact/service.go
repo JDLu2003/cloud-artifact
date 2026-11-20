@@ -48,6 +48,8 @@ type Service struct {
 	GCMinAge time.Duration
 	// SharedBlobs：文件在所有机器共用的 R2 上，只有写节点可以清理文件。
 	SharedBlobs bool
+	// RenderMarkdown 把 Markdown 渲染成完整页面，用于预先生成 Worker 直接返回的内容（由 httpapi 设置）。
+	RenderMarkdown MarkdownRenderer
 
 	gcMu  sync.RWMutex // 发布时读锁，GC 时写锁，避免刚写入的对象被回收
 	pubMu sync.Mutex   // 串行化“写对象 + 写数据库”，避免并发发布互相覆盖同一版本的对象
@@ -380,6 +382,7 @@ func (s *Service) Publish(ctx context.Context, in PublishInput) (*PublishResult,
 			s.Blobs.DeleteKey(k)
 		}
 	}
+	renderSrc := map[string][]byte{}
 	for _, f := range files {
 		data, ok := newBlobs[f.SHA256]
 		if !ok {
@@ -388,6 +391,9 @@ func (s *Service) Publish(ctx context.Context, in PublishInput) (*PublishResult,
 				cleanup()
 				return nil, errf(500, "blob_missing", "文件 %s 的内容在存储中缺失", f.Path)
 			}
+		}
+		if needsRender(f.Path) {
+			renderSrc[f.Path] = data
 		}
 		loc := blob.Loc{ArtifactID: artID, Version: prev + 1, Path: f.Path}
 		if err := s.Blobs.PutAt(loc, data); err != nil {
@@ -404,6 +410,18 @@ func (s *Service) Publish(ctx context.Context, in PublishInput) (*PublishResult,
 	}
 	errs, _, _ := lint.Summary(warnings)
 	nowTS := time.Now().Unix()
+	if s.EdgeEnabled() {
+		// 先写新版本的清单和渲染结果（此时还没有任何地方指向这个版本），再提交元数据
+		ea := &store.Artifact{ID: artID, Title: title, OwnerName: owner.Name, UpdatedAt: nowTS}
+		if art != nil {
+			ea.OwnerName = art.OwnerName
+		}
+		if err := s.edgeWriteVersion(ea, prev+1, entry, files, renderSrc); err != nil {
+			cleanup()
+			s.Blobs.DeleteEdgePrefix(fmt.Sprintf("_r/%s/v%d/", artID, prev+1))
+			return nil, fmt.Errorf("写入内容分发文件失败：%w", err)
+		}
+	}
 	body := searchText(kind, texts[entry])
 	err = s.Store.Tx(ctx, func(tx *store.Tx) error {
 		if art == nil {
@@ -454,6 +472,7 @@ func (s *Service) Publish(ctx context.Context, in PublishInput) (*PublishResult,
 		action = "artifact.restore"
 	}
 	s.Store.Audit(in.Actor.uid(), in.Actor.KeyID, in.Actor.IP, action, art.ID, fmt.Sprintf("v%d %d 个文件 %s", art.CurrentVersion, len(files), auth.FormatBytes(total)))
+	s.edgeAfterChange(art.ID)
 	res.ID, res.Version = art.ID, art.CurrentVersion
 	res.URL, res.RawURL = s.ViewURL(art.ID), s.rawURL(art.ID)
 	return res, nil
@@ -636,6 +655,7 @@ func (s *Service) Delete(a Actor, id string) error {
 		return err
 	}
 	s.Store.Audit(a.uid(), a.KeyID, a.IP, "artifact.delete", id, art.Title)
+	s.edgeAfterChange(id)
 	return nil
 }
 
@@ -660,6 +680,7 @@ func (s *Service) Undelete(a Actor, id string) error {
 		return err
 	}
 	s.Store.Audit(a.uid(), a.KeyID, a.IP, "artifact.undelete", id, art.Title)
+	s.edgeAfterChange(id)
 	return nil
 }
 
@@ -675,6 +696,7 @@ func (s *Service) Purge(a Actor, id string) error {
 		return err
 	}
 	s.Store.Audit(a.uid(), a.KeyID, a.IP, "artifact.purge", id, art.Title)
+	s.edgeAfterChange(id)
 	return nil
 }
 
@@ -723,6 +745,10 @@ func (s *Service) UpdateMeta(a Actor, id string, p MetaPatch) (*store.Artifact, 
 		detail = append(detail, "标题")
 	}
 	s.Store.Audit(a.uid(), a.KeyID, a.IP, "artifact.meta", art.ID, strings.Join(detail, "；"))
+	s.edgeAfterChange(art.ID)
+	if p.Title != nil && *p.Title != art.Title {
+		go s.edgeRerenderMarkdown(art.ID)
+	}
 	return s.Store.ArtifactByID(art.ID)
 }
 
@@ -734,6 +760,7 @@ func (s *Service) GC(writer bool) (int, int64, error) {
 		for _, id := range s.Store.ExpiredTrash(st.TrashDays) {
 			if err := s.Store.Purge(id); err == nil {
 				s.Store.Audit(nil, nil, "", "artifact.purge", id, "回收站到期自动清理")
+				s.edgeAfterChange(id)
 			}
 		}
 	}

@@ -70,6 +70,10 @@ func main() {
 		err = cmdGC()
 	case "backup":
 		err = cmdBackup(args[1:])
+	case "content-key":
+		err = cmdContentKey()
+	case "backfill-render":
+		err = cmdBackfillRender()
 	case "migrate-blobs":
 		err = cmdMigrateBlobs(args[1:])
 	case "version", "-v", "--version":
@@ -100,6 +104,8 @@ func usage() {
   check <文件或目录>                 本地运行发布前检查
   gc                                 清理无引用文件和过期回收站
   migrate-blobs [--purge-legacy]     把旧版 blobs/ 布局迁到 <artifact_id>/v<版本>/<路径>（可重复执行）
+  content-key                        输出内容令牌的签名密钥（配置 Cloudflare Worker 用，不能用来登录）
+  backfill-render                    文件在 R2 上时，为已有版本补齐 Worker 需要的清单与渲染结果（可重复执行）
   backup <文件>                      在线备份数据库（blobs/ 目录另行复制）
   version
 
@@ -221,6 +227,9 @@ func serve() error {
 		if err := bootstrap(a, srv); err != nil {
 			return err
 		}
+		if err := a.svc.EdgeWriteSettings(); err != nil {
+			slog.Error("写入内容分发设置失败", "err", err)
+		}
 	}
 	go housekeeping(a, isWriter)
 	bk := newBackup(a, isWriter)
@@ -330,6 +339,14 @@ func housekeeping(a *app, isWriter func() bool) {
 		if w {
 			a.store.PurgeExpiredSessions()
 			a.store.TrimAudit(50000)
+		}
+		// 文件在 R2 上时，每小时重写一遍访问控制信息，兜底修复漏写的变更
+		if w && a.svc.EdgeEnabled() {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+			if _, err := a.svc.EdgeResync(ctx, false); err != nil {
+				slog.Error("同步内容分发信息失败", "err", err)
+			}
+			cancel()
 		}
 		if n, freed, err := a.svc.GC(w); err == nil && n > 0 {
 			slog.Info("清理无引用文件", "files", n, "freed", auth.FormatBytes(freed))
@@ -593,6 +610,32 @@ func cmdCheck(args []string) error {
 		}
 	}
 	return nil
+}
+
+func cmdContentKey() error {
+	a, err := openCLI(false)
+	if err != nil {
+		return err
+	}
+	defer a.store.Close()
+	fmt.Println(a.signer.ContentKey())
+	return nil
+}
+
+func cmdBackfillRender() error {
+	a, err := openCLI(false)
+	if err != nil {
+		return err
+	}
+	defer a.store.Close()
+	viewerFS, _ := fs.Sub(assets.FS, "web/viewer")
+	srv := &httpapi.Server{Cfg: a.cfg, Store: a.store, Svc: a.svc, Signer: a.signer, ViewerFS: viewerFS, LibFS: a.libFS}
+	if err := srv.Init(); err != nil {
+		return err
+	}
+	n, err := a.svc.EdgeResync(context.Background(), true)
+	fmt.Printf("已处理 %d 个 artifact\n", n)
+	return err
 }
 
 func cmdGC() error {

@@ -420,10 +420,20 @@ func (s *Server) serveMarkdown(w http.ResponseWriter, r *http.Request, art *stor
 		http.Error(w, "读取内容失败", 500)
 		return
 	}
+	out, err := s.markdownPage(art, data)
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Write(out)
+}
+
+// markdownPage 把 Markdown 渲染成完整的页面；也用于发布时预先生成 Worker 直接返回的内容。
+func (s *Server) markdownPage(art *store.Artifact, data []byte) ([]byte, error) {
 	doc, err := artifact.RenderMarkdown(data)
 	if err != nil {
-		http.Error(w, "Markdown 渲染失败："+err.Error(), 500)
-		return
+		return nil, fmt.Errorf("Markdown 渲染失败：%w", err)
 	}
 	title := doc.Title
 	if title == "" {
@@ -436,11 +446,9 @@ func (s *Server) serveMarkdown(w http.ResponseWriter, r *http.Request, art *stor
 	}
 	var buf bytes.Buffer
 	if err := s.tpl.ExecuteTemplate(&buf, "markdown.tmpl", page); err != nil {
-		http.Error(w, "模板渲染失败："+err.Error(), 500)
-		return
+		return nil, fmt.Errorf("模板渲染失败：%w", err)
 	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Write(buf.Bytes())
+	return buf.Bytes(), nil
 }
 
 // ---- 管理后台静态文件 ----

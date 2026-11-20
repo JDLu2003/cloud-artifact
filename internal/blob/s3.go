@@ -74,6 +74,11 @@ func hmacSHA256(key []byte, msg string) []byte {
 
 // do 发起带 SigV4 签名的请求。bodySHA 是请求体的 sha256 十六进制。
 func (s *s3Backend) do(method, key string, query url.Values, body []byte, bodySHA string) (*http.Response, error) {
+	return s.doType(method, key, query, body, bodySHA, "")
+}
+
+// doType 同 do；contentType 非空时作为对象的 Content-Type 保存（不参与签名）。
+func (s *s3Backend) doType(method, key string, query url.Values, body []byte, bodySHA, contentType string) (*http.Response, error) {
 	canonPath := uriEncode(strings.TrimRight(s.base.Path, "/")+"/"+s.cfg.Bucket+"/"+key, false)
 	var qs []string
 	for k, vs := range query {
@@ -118,6 +123,9 @@ func (s *s3Backend) do(method, key string, query url.Values, body []byte, bodySH
 	}
 	req.Header.Set("x-amz-date", amzDate)
 	req.Header.Set("x-amz-content-sha256", bodySHA)
+	if contentType != "" {
+		req.Header.Set("Content-Type", contentType)
+	}
 	req.Header.Set("Authorization", fmt.Sprintf("AWS4-HMAC-SHA256 Credential=%s/%s, SignedHeaders=%s, Signature=%s",
 		s.cfg.AccessKey, scope, signed, sig))
 	return s.client.Do(req)
@@ -139,8 +147,10 @@ func (s *s3Backend) has(key string) bool {
 	return resp.StatusCode == http.StatusOK
 }
 
-func (s *s3Backend) put(key string, data []byte) error {
-	resp, err := s.do(http.MethodPut, s.key(key), nil, data, Sum(data))
+func (s *s3Backend) put(key string, data []byte) error { return s.putType(key, data, "") }
+
+func (s *s3Backend) putType(key string, data []byte, contentType string) error {
+	resp, err := s.doType(http.MethodPut, s.key(key), nil, data, Sum(data), contentType)
 	if err != nil {
 		return err
 	}
@@ -178,13 +188,16 @@ func (s *s3Backend) del(key string) error {
 	return nil
 }
 
-func (s *s3Backend) list() ([]string, error) {
+func (s *s3Backend) list() ([]string, error) { return s.listPrefix("") }
+
+// listPrefix 列出 prefix（不含配置的全局前缀）下的对象键。
+func (s *s3Backend) listPrefix(prefix string) ([]string, error) {
 	var keys []string
 	token := ""
 	for {
 		q := url.Values{"list-type": {"2"}}
-		if s.cfg.Prefix != "" {
-			q.Set("prefix", s.cfg.Prefix)
+		if p := s.cfg.Prefix + prefix; p != "" {
+			q.Set("prefix", p)
 		}
 		if token != "" {
 			q.Set("continuation-token", token)

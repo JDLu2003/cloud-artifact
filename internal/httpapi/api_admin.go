@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -583,6 +584,9 @@ func (s *Server) adminSettingsSave(w http.ResponseWriter, r *http.Request, a art
 		return
 	}
 	s.Store.Audit(&a.User.ID, nil, a.IP, "settings.update", "", "")
+	if err := s.Svc.EdgeWriteSettings(); err != nil {
+		slog.Error("写入内容分发设置失败", "err", err)
+	}
 	writeJSON(w, 200, map[string]any{"settings": st})
 }
 

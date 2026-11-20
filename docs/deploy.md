@@ -99,3 +99,18 @@ docker compose up -d --build
 4. `docker compose run --rm artifact migrate-blobs --purge-legacy`：再补一遍增量，并删除对象存储里旧布局的对象。确认无误后再删本机旧的 `data/blobs/`。
 
 R2 的 API 令牌需要对该存储桶有「对象读和写」权限。Access Key 与 Secret Key 在 Cloudflare 控制台的 R2 → 管理 API 令牌里创建。
+
+## 内容直接由 Cloudflare 提供（Worker 读 R2）
+
+文件存在 R2 上时，可以让浏览器直接从 Cloudflare 读取 artifact 内容，完全不经过服务器：`worker/` 是一个绑定 R2 的 Worker，路由与服务器的 `/c/<id>/v<版本>/<令牌>/<路径>` 完全相同，访问规则（令牌、私有、旧版本、回收站）和安全头（CSP 沙箱等）也与服务器一致。
+
+写节点在每次发布、改可见性、删除时，把 Worker 需要的信息写进 R2：`_m/<id>.json`（访问控制）、`_m/<id>/v<版本>.json`（文件清单）、`_r/<id>/v<版本>/<路径>`（包装后的 HTML 和渲染好的 Markdown 页面）、`_m/_settings.json`（CSP 白名单）。另外每小时全量重写一遍访问控制信息作为兜底。
+
+启用步骤（域名已托管在 Cloudflare）：
+
+1. 部署 Worker：`make worker-deploy DOMAIN=content.<域名> BUCKET=<R2 桶名> [PREFIX=<与 ARTIFACT_S3_PREFIX 相同>]`（需要已登录 wrangler，或设置 `CLOUDFLARE_API_TOKEN`）。
+2. 设置内容令牌的签名密钥：`docker exec artifact artifactd content-key | (cd worker && npx wrangler secret put CONTENT_KEY -c wrangler.generated.toml)`。这个密钥由主密钥派生，只能签内容令牌，不能用来登录。
+3. 为已有的 artifact 补齐分发对象：`docker exec artifact artifactd backfill-render`（可重复执行）。
+4. 在 VPS 面板「artifact 额外配置」里加上 `ARTIFACT_CONTENT_ORIGIN=https://content.<域名>`，约 1 分钟后各机器生效。之后查看页里的 iframe 都指向 Worker。
+
+回退：删掉 `ARTIFACT_CONTENT_ORIGIN` 即可恢复由服务器提供内容，R2 上的分发对象不影响服务器。

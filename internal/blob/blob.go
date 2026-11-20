@@ -166,6 +166,71 @@ func (s *Store) DeleteKey(key string) error {
 // List 列出存储中所有对象的键。
 func (s *Store) List() ([]string, error) { return s.b.list() }
 
+// Shared 表示文件存在所有机器共用的对象存储上（R2）。
+func (s *Store) Shared() bool {
+	_, ok := s.b.(*s3Backend)
+	return ok
+}
+
+// 内容分发用的对象（只在对象存储上）：
+//
+//	_m/<id>.json, _m/<id>/v<版本>.json, _m/_settings.json   访问控制与文件清单
+//	_r/<id>/v<版本>/<路径>                                 预先渲染好的 HTML
+//
+// 这些键以 _ 开头，不符合 artifact 文件的键格式，所以 GC 不会碰它们。
+var edgeKeyRe = regexp.MustCompile(`^_[mr]/[A-Za-z0-9_]{1,32}(\.json|/.+)$`)
+
+func validEdgeKey(key string) error {
+	if !edgeKeyRe.MatchString(key) || strings.Contains(key, "..") || strings.Contains(key, "//") {
+		return fmt.Errorf("invalid edge key: %q", key)
+	}
+	return nil
+}
+
+// PutEdge 写入一个内容分发对象（只在对象存储模式下可用）。
+func (s *Store) PutEdge(key string, data []byte, contentType string) error {
+	b, ok := s.b.(*s3Backend)
+	if !ok {
+		return errors.New("blob: 内容分发对象只能写入对象存储")
+	}
+	if err := validEdgeKey(key); err != nil {
+		return err
+	}
+	return b.putType(key, data, contentType)
+}
+
+// DeleteEdgePrefix 删除某个前缀下的所有内容分发对象（例如 _r/<id>/）。
+func (s *Store) DeleteEdgePrefix(prefix string) error {
+	b, ok := s.b.(*s3Backend)
+	if !ok || !strings.HasPrefix(prefix, "_") {
+		return nil
+	}
+	keys, err := b.listPrefix(prefix)
+	if err != nil {
+		return err
+	}
+	for _, k := range keys {
+		if validEdgeKey(k) == nil {
+			if err := b.del(k); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// DeleteEdge 删除一个内容分发对象；不存在时不报错。
+func (s *Store) DeleteEdge(key string) error {
+	b, ok := s.b.(*s3Backend)
+	if !ok {
+		return nil
+	}
+	if err := validEdgeKey(key); err != nil {
+		return err
+	}
+	return b.del(key)
+}
+
 type localBackend struct{ dir string }
 
 func (l *localBackend) path(key string) string { return filepath.Join(l.dir, filepath.FromSlash(key)) }

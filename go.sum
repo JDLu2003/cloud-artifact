@@ -2,6 +2,8 @@ cloud.google.com/go v0.34.0/go.mod h1:aQUYkXzVsufM+DwF1aE+0xfcU+56JwCaLick0ClmMT
 github.com/DataDog/datadog-go v3.2.0+incompatible/go.mod h1:LButxg5PwREeZtORoXG3tL4fMGNddJ+vMq1mwgfaqoQ=
 github.com/JDLu2003/vps-cluster v0.1.1 h1:e8dXa2L+BWcJpistZRoSIg2kDN8MHyV/L56n68SdGp0=
 github.com/JDLu2003/vps-cluster v0.1.1/go.mod h1:DYbLOmYoOqS5iDOu57NPSyUubdXCrTaPqka7X1UF9qE=
+github.com/JDLu2003/vps-cluster v0.1.2 h1:lG3xJnW0TMsQteg+q9hp6r/OUw5RPYuzEzkwnUxypnY=
+github.com/JDLu2003/vps-cluster v0.1.2/go.mod h1:DYbLOmYoOqS5iDOu57NPSyUubdXCrTaPqka7X1UF9qE=
 github.com/alecthomas/template v0.0.0-20160405071501-a0175ee3bccc/go.mod h1:LOuyumcjzFXgccqObfd/Ljyb9UuFJ6TxHnclSeseNhc=
 github.com/alecthomas/template v0.0.0-20190718012654-fb15b899a751/go.mod h1:LOuyumcjzFXgccqObfd/Ljyb9UuFJ6TxHnclSeseNhc=
 github.com/alecthomas/units v0.0.0-20151022065526-2efee857e7cf/go.mod h1:ybxpYRFXyAe+OPACYpWeL0wqObRcbAqCMya13uyzqw0=

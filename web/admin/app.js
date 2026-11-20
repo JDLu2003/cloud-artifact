@@ -227,7 +227,7 @@ function dayLabels(n) {
 
 // ---------- 登录 ----------
 
-function Login({ onLogin }) {
+function Login({ onLogin, passwordOnly }) {
   const [u, setU] = useState('');
   const [p, setP] = useState('');
   const [err, setErr] = useState('');
@@ -236,7 +236,7 @@ function Login({ onLogin }) {
     e.preventDefault();
     setBusy(true); setErr('');
     try {
-      const r = await api('POST', '/login', { username: u, password: p });
+      const r = await api('POST', '/login', passwordOnly ? { password: p } : { username: u, password: p });
       CSRF = r.csrf;
       const next = new URLSearchParams(location.search).get('next');
       if (next && next.startsWith('/') && !next.startsWith('//')) { location.href = next; return; }
@@ -247,8 +247,8 @@ function Login({ onLogin }) {
   };
   return html`<div class="login"><form onSubmit=${submit}>
     <h1><${Mark} />Artifact 管理后台</h1>
-    <p>用管理员分配的用户名和密码登录。</p>
-    <label class="f"><span>用户名</span><input class="i" id="login-user" autocomplete="username" value=${u} onInput=${(e) => setU(e.target.value)} required /></label>
+    <p>${passwordOnly ? '使用 VPS 管理器的管理员密码登录。' : '用管理员分配的用户名和密码登录。'}</p>
+    ${!passwordOnly && html`<label class="f"><span>用户名</span><input class="i" id="login-user" autocomplete="username" value=${u} onInput=${(e) => setU(e.target.value)} required /></label>`}
     <label class="f"><span>密码</span><input class="i" id="login-pass" type="password" autocomplete="current-password" value=${p} onInput=${(e) => setP(e.target.value)} required /></label>
     ${err && html`<div class="alert bad">${err}</div>`}
     <button class="btn primary" type="submit" disabled=${busy}>${busy ? '正在登录…' : '登录'}</button>
@@ -737,12 +737,12 @@ function Account({ me, onChange }) {
   return html`<div class="stack">
     <div class="page-head"><div><h1>账户</h1><p>${me.user.name}${me.user.display_name ? '（' + me.user.display_name + '）' : ''}，服务地址 <span class="mono">${me.server}</span></p></div></div>
     <div class="grid-2">
-      <${Panel} title="修改密码"><form class="stack" onSubmit=${submit}>
+      ${me.password_only ? html`<${Panel} title="密码"><p style="margin:0">后台使用 VPS 管理器的管理员密码登录，请在 VPS 管理器里修改。</p><//>` : html`<${Panel} title="修改密码"><form class="stack" onSubmit=${submit}>
         ${me.has_password && html`<label class="f"><span>当前密码</span><input class="i" id="p-old" type="password" autocomplete="current-password" value=${f.old} onInput=${(e) => setF({ ...f, old: e.target.value })} required /></label>`}
         <label class="f"><span>新密码 <small>至少 8 位</small></span><input class="i" id="p-new" type="password" autocomplete="new-password" minlength="8" value=${f.new} onInput=${(e) => setF({ ...f, new: e.target.value })} required /></label>
         <label class="f"><span>再输入一次</span><input class="i" id="p-again" type="password" autocomplete="new-password" value=${f.again} onInput=${(e) => setF({ ...f, again: e.target.value })} required /></label>
         <div><button class="btn primary" type="submit">修改密码</button></div>
-      </form><//>
+      </form><//>`}
       <${Panel} title="接入 agent">
         <p style="margin:0 0 10px">在<a href="#/keys">密钥页</a>签发一把密钥，页面会给出完整的接入提示词，粘贴给 agent 即可。</p>
         <p class="muted" style="margin:0">技能包地址：<a class="mono" href="/skill.tar.gz">${me.server}/skill.tar.gz</a></p>
@@ -798,7 +798,7 @@ function App() {
   if (!me) return html`<div class="empty">正在加载…</div>`;
   if (!me.user || route.path === '/login') {
     if (me.user && route.path === '/login') { location.hash = '#/'; return null; }
-    return html`<${Login} onLogin=${refresh} /><${Toast} />`;
+    return html`<${Login} onLogin=${refresh} passwordOnly=${!!me.password_only} /><${Toast} />`;
   }
   return html`<${Shell} me=${me} route=${route} refresh=${refresh} /><${Toast} />`;
 }

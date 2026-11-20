@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"encoding/json"
+	"golang.org/x/crypto/bcrypt"
 	"io"
 	"io/fs"
 	"net/http"
@@ -234,5 +235,48 @@ func TestSkillTarball(t *testing.T) {
 	}
 	if py := found["artifact/scripts/artifact.py"]; !strings.Contains(py, `SKILL_VERSION = "`+e.srv.Skill.Version+`"`) {
 		t.Fatal("script should carry the skill version")
+	}
+}
+
+func TestAdminPasswordOnlyLogin(t *testing.T) {
+	e := setup(t)
+	hash, err := bcrypt.GenerateFromPassword([]byte("vps-panel-pass"), bcrypt.MinCost)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.srv.Cfg.LoginPasswordHash = string(hash)
+	login := func(body any) (int, map[string]any) {
+		b, _ := json.Marshal(body)
+		req, _ := http.NewRequest("POST", e.ts.URL+"/api/admin/login", bytes.NewReader(b))
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		var out map[string]any
+		json.NewDecoder(resp.Body).Decode(&out)
+		return resp.StatusCode, out
+	}
+	// 未登录时 /me 告诉前端只需要密码
+	resp, _ := http.Get(e.ts.URL + "/api/admin/me")
+	var me map[string]any
+	json.NewDecoder(resp.Body).Decode(&me)
+	resp.Body.Close()
+	if me["password_only"] != true {
+		t.Fatalf("me = %v", me)
+	}
+	if code, _ := login(map[string]string{"password": "vps-panel-pass"}); code != 200 {
+		t.Fatalf("panel password login: %d", code)
+	}
+	if code, out := login(map[string]string{"password": "vps-panel-pass"}); code != 200 || out["user"].(map[string]any)["name"] != "admin" {
+		t.Fatalf("should log in as admin: %d %v", code, out)
+	}
+	// 原来的用户名 + 密码不再可用
+	if code, _ := login(map[string]string{"username": "admin", "password": "correct-horse"}); code != 401 {
+		t.Fatalf("old password should fail: %d", code)
+	}
+	if code, _ := login(map[string]string{"password": "wrong"}); code != 401 {
+		t.Fatalf("wrong password: %d", code)
 	}
 }

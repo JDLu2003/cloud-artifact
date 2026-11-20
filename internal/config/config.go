@@ -16,11 +16,14 @@ type Config struct {
 	ContentOrigin string // 可选：artifact 内容使用的独立源，如 http://64.83.26.230:8791
 	DataDir       string
 	AdminUser     string
-	AdminPassword string
-	Secret        string // HMAC 密钥；为空时自动生成并保存在数据库里
-	MinFreeDiskMB int64  // 磁盘剩余低于该值时拒绝写入
-	TrustProxy    bool   // 是否信任 X-Forwarded-For / X-Forwarded-Proto
-	MaxBodyMB     int64  // 单个请求体上限
+	// LoginPasswordHash 非空时后台只用密码登录（不填用户名），登录后即为 AdminUser。
+	// 由 VPS 管理器下发其管理员密码的 bcrypt 哈希，两边共用同一个密码。
+	LoginPasswordHash string
+	AdminPassword     string
+	Secret            string // HMAC 密钥；为空时自动生成并保存在数据库里
+	MinFreeDiskMB     int64  // 磁盘剩余低于该值时拒绝写入
+	TrustProxy        bool   // 是否信任 X-Forwarded-For / X-Forwarded-Proto
+	MaxBodyMB         int64  // 单个请求体上限
 
 	// 对象存储（S3 兼容，如 Cloudflare R2）。S3Bucket 非空时文件内容存放到对象存储，否则存本地 DataDir/blobs。
 	S3Endpoint  string
@@ -68,22 +71,23 @@ func envBool(key string, def bool) bool {
 func Load() (*Config, error) {
 	port := env("ARTIFACT_PORT", "8790")
 	c := &Config{
-		Addr:          env("ARTIFACT_ADDR", ":"+port),
-		PublicURL:     strings.TrimRight(env("ARTIFACT_PUBLIC_URL", "http://localhost:"+port), "/"),
-		ContentOrigin: strings.TrimRight(env("ARTIFACT_CONTENT_ORIGIN", ""), "/"),
-		DataDir:       env("ARTIFACT_DATA_DIR", "./data"),
-		AdminUser:     env("ARTIFACT_ADMIN_USER", "admin"),
-		AdminPassword: env("ARTIFACT_ADMIN_PASSWORD", ""),
-		Secret:        env("ARTIFACT_SECRET", ""),
-		MinFreeDiskMB: envInt("ARTIFACT_MIN_FREE_DISK_MB", 300),
-		TrustProxy:    envBool("ARTIFACT_TRUST_PROXY", false),
-		MaxBodyMB:     envInt("ARTIFACT_MAX_BODY_MB", 64),
-		S3Endpoint:    strings.TrimRight(env("ARTIFACT_S3_ENDPOINT", ""), "/"),
-		S3Bucket:      env("ARTIFACT_S3_BUCKET", ""),
-		S3AccessKey:   env("ARTIFACT_S3_ACCESS_KEY", ""),
-		S3SecretKey:   env("ARTIFACT_S3_SECRET_KEY", ""),
-		S3Region:      env("ARTIFACT_S3_REGION", "auto"),
-		S3Prefix:      env("ARTIFACT_S3_PREFIX", ""),
+		Addr:              env("ARTIFACT_ADDR", ":"+port),
+		PublicURL:         strings.TrimRight(env("ARTIFACT_PUBLIC_URL", "http://localhost:"+port), "/"),
+		ContentOrigin:     strings.TrimRight(env("ARTIFACT_CONTENT_ORIGIN", ""), "/"),
+		DataDir:           env("ARTIFACT_DATA_DIR", "./data"),
+		AdminUser:         env("ARTIFACT_ADMIN_USER", "admin"),
+		LoginPasswordHash: env("ARTIFACT_LOGIN_PASSWORD_HASH", ""),
+		AdminPassword:     env("ARTIFACT_ADMIN_PASSWORD", ""),
+		Secret:            env("ARTIFACT_SECRET", ""),
+		MinFreeDiskMB:     envInt("ARTIFACT_MIN_FREE_DISK_MB", 300),
+		TrustProxy:        envBool("ARTIFACT_TRUST_PROXY", false),
+		MaxBodyMB:         envInt("ARTIFACT_MAX_BODY_MB", 64),
+		S3Endpoint:        strings.TrimRight(env("ARTIFACT_S3_ENDPOINT", ""), "/"),
+		S3Bucket:          env("ARTIFACT_S3_BUCKET", ""),
+		S3AccessKey:       env("ARTIFACT_S3_ACCESS_KEY", ""),
+		S3SecretKey:       env("ARTIFACT_S3_SECRET_KEY", ""),
+		S3Region:          env("ARTIFACT_S3_REGION", "auto"),
+		S3Prefix:          env("ARTIFACT_S3_PREFIX", ""),
 	}
 	if _, err := url.ParseRequestURI(c.PublicURL); err != nil {
 		return nil, fmt.Errorf("ARTIFACT_PUBLIC_URL 无效：%w", err)

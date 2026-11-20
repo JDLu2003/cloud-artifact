@@ -71,15 +71,23 @@ func (s *Server) adminLogin(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	u, err := s.Store.UserByName(req.Username)
-	hash := ""
-	if err == nil {
+	name, hash := req.Username, ""
+	if s.Cfg.LoginPasswordHash != "" {
+		// 只用密码登录：密码与 VPS 管理器相同，登录为管理员
+		name, hash = s.Cfg.AdminUser, s.Cfg.LoginPasswordHash
+	}
+	u, err := s.Store.UserByName(name)
+	if err == nil && s.Cfg.LoginPasswordHash == "" {
 		hash = u.PasswordHash
 	}
 	if !auth.CheckPassword(hash, req.Password) || err != nil || u.Disabled {
 		s.Limiter.Allow("login:"+ip, 10)
 		s.Store.Audit(nil, nil, ip, "login.fail", req.Username, "")
-		writeErr(w, &artifact.Error{Status: 401, Code: "bad_credentials", Msg: "用户名或密码不正确"})
+		msg := "用户名或密码不正确"
+		if s.Cfg.LoginPasswordHash != "" {
+			msg = "密码不正确"
+		}
+		writeErr(w, &artifact.Error{Status: 401, Code: "bad_credentials", Msg: msg})
 		return
 	}
 	tok, err := s.setSession(w, r, u)
@@ -98,14 +106,16 @@ func (s *Server) adminLogout(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) adminMe(w http.ResponseWriter, r *http.Request) {
 	u, tok := s.sessionUser(r)
+	passwordOnly := s.Cfg.LoginPasswordHash != ""
 	if u == nil {
-		writeJSON(w, 200, map[string]any{"user": nil})
+		writeJSON(w, 200, map[string]any{"user": nil, "password_only": passwordOnly})
 		return
 	}
 	st := s.Store.Settings()
 	writeJSON(w, 200, map[string]any{
 		"user": userJSON(u), "csrf": s.Signer.CSRFToken(tok), "server": s.Cfg.PublicURL,
 		"version": s.Version, "allow_self_keys": st.AllowSelfKeys || u.IsAdmin(), "has_password": u.HasPassword,
+		"password_only": passwordOnly,
 	})
 }
 

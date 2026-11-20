@@ -58,8 +58,12 @@ func startCluster(a *app) (*cluster.Node, error) {
 		return nil, err
 	}
 	a.store.SetApplier(n)
+	a.svc.GCMinAge = time.Hour
+	if a.r2 != nil {
+		return n, nil // 文件在 R2 上，所有机器共用，无需在机器之间同步
+	}
 
-	// 其他机器拉取/推送文件的内部接口（只有持有集群身份的节点能访问）
+	// 文件存本机时：其他机器拉取/推送文件的内部接口（只有持有集群身份的节点能访问）
 	n.Handle("GET /blob/{key...}", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		b, err := a.blobs.ReadLocal(r.PathValue("key"))
 		if err != nil {
@@ -86,7 +90,6 @@ func startCluster(a *app) (*cluster.Node, error) {
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	a.blobs.SetFetcher(func(key string) ([]byte, error) { return fetchBlob(a, n, key) })
-	a.svc.GCMinAge = time.Hour
 	a.svc.Replicate = func(ctx context.Context, keys []string) error { return pushBlobs(ctx, a, n, keys) }
 	return n, nil
 }
@@ -108,7 +111,7 @@ func peers(n *cluster.Node) []string {
 	return out
 }
 
-// fetchBlob 依次从其他机器、R2 备份取回文件。
+// fetchBlob 依次从其他机器取回文件。
 func fetchBlob(a *app, n *cluster.Node, key string) ([]byte, error) {
 	for _, addr := range peers(n) {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -124,9 +127,6 @@ func fetchBlob(a *app, n *cluster.Node, key string) ([]byte, error) {
 			continue
 		}
 		cancel()
-	}
-	if a.r2 != nil {
-		return a.r2.Get(key)
 	}
 	return nil, os.ErrNotExist
 }
@@ -208,45 +208,13 @@ func r2Config(a *app) (s3.Config, bool) {
 	return cfg, cfg.Valid()
 }
 
-// newBackup 返回 R2 备份任务：数据库快照 + 文件增量（文件不可变，只上传 R2 上没有的）。
+// newBackup 返回数据库快照备份任务（文件本身已即时写入 R2，不需要另外备份）。
+// 有写入就在 1 分钟内备份，另外每 6 小时兜底一次；快照按小时保留 48 份。
 func newBackup(a *app, isWriter func() bool) *backup.Runner {
-	// 有写入就在 1 分钟内备份（数据库快照 + 新文件），另外每 6 小时兜底一次；快照按小时保留 48 份
 	return &backup.Runner{
 		Service: "artifact", Source: a.store, IsWriter: isWriter,
 		Debounce: time.Minute, Keep: 48,
 		Config: func() (s3.Config, bool) { return r2Config(a) },
-		Extra: func(ctx context.Context, c *s3.Client) error {
-			live, err := a.store.LiveFileKeys()
-			if err != nil {
-				return err
-			}
-			remote, err := c.List("")
-			if err != nil {
-				return err
-			}
-			have := make(map[string]bool, len(remote))
-			for _, k := range remote {
-				have[k] = true
-			}
-			n := 0
-			for k := range live {
-				if have[k] || ctx.Err() != nil {
-					continue
-				}
-				b, err := a.blobs.ReadKey(k)
-				if err != nil {
-					continue
-				}
-				if err := c.Put(k, b); err != nil {
-					return err
-				}
-				n++
-			}
-			if n > 0 {
-				slog.Info("已备份新文件到 R2", "files", n)
-			}
-			return nil
-		},
 	}
 }
 

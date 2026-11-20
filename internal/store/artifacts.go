@@ -518,3 +518,21 @@ func (s *Store) PublishesPerDay(days int, ownerID int64) []int64 {
 	}
 	return out
 }
+
+// AllArtifactIDs 返回所有 artifact 的 ID（含回收站中的）。
+func (s *Store) AllArtifactIDs() ([]string, error) {
+	rows, err := s.DB.Query(`SELECT id FROM artifacts ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}

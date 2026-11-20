@@ -1,0 +1,5 @@
+{
+  "name": "artifact-content-worker",
+  "private": true,
+  "type": "module"
+}

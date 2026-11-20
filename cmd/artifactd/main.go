@@ -70,6 +70,10 @@ func main() {
 		err = cmdGC()
 	case "backup":
 		err = cmdBackup(args[1:])
+	case "content-key":
+		err = cmdContentKey()
+	case "backfill-render":
+		err = cmdBackfillRender()
 	case "migrate-blobs":
 		err = cmdMigrateBlobs(args[1:])
 	case "version", "-v", "--version":
@@ -100,6 +104,8 @@ func usage() {
   check <文件或目录>                 本地运行发布前检查
   gc                                 清理无引用文件和过期回收站
   migrate-blobs [--purge-legacy]     把旧版 blobs/ 布局迁到 <artifact_id>/v<版本>/<路径>（可重复执行）
+  content-key                        输出内容令牌的签名密钥（配置 Cloudflare Worker 用，不能用来登录）
+  backfill-render                    文件在 R2 上时，为已有版本补齐 Worker 需要的清单与渲染结果（可重复执行）
   backup <文件>                      在线备份数据库（blobs/ 目录另行复制）
   version
 
@@ -126,21 +132,25 @@ func open() (*app, error) {
 	if err != nil {
 		return nil, err
 	}
-	// 文件内容始终存本机；配置了 ARTIFACT_S3_* 时 R2 用于备份，并在本机缺失时取回
-	bl, err := blob.New(filepath.Join(cfg.DataDir, "blobs"))
-	if err != nil {
-		return nil, err
-	}
-	bl.SetLocator(st.BlobLocation)
+	// 配置了 ARTIFACT_S3_* 时，artifact 文件直接写入 R2（即时上传，所有机器共用），
+	// 集群只复制数据库里的控制信息；没有配置时文件存本机，由机器之间互相推送。
 	libFS, _ := fs.Sub(assets.FS, "web/lib")
-	a := &app{cfg: cfg, store: st, blobs: bl, libFS: libFS}
+	a := &app{cfg: cfg, store: st, libFS: libFS}
+	var bl *blob.Store
 	if c, ok := r2Config(a); ok {
+		if bl, err = blob.NewS3(blob.S3Config{Endpoint: c.Endpoint, Bucket: c.Bucket, AccessKey: c.AccessKey,
+			SecretKey: c.SecretKey, Region: c.Region, Prefix: c.Prefix}); err != nil {
+			return nil, err
+		}
 		if a.r2, err = s3.New(c); err != nil {
 			return nil, err
 		}
-		bl.SetFetcher(a.r2.Get)
+	} else if bl, err = blob.New(filepath.Join(cfg.DataDir, "blobs")); err != nil {
+		return nil, err
 	}
-	a.svc = &artifact.Service{Store: st, Blobs: bl, Cfg: cfg, LibExists: httpapi.LibExists(libFS)}
+	bl.SetLocator(st.BlobLocation)
+	a.blobs = bl
+	a.svc = &artifact.Service{Store: st, Blobs: bl, Cfg: cfg, LibExists: httpapi.LibExists(libFS), SharedBlobs: a.r2 != nil}
 	return a, nil
 }
 
@@ -216,6 +226,9 @@ func serve() error {
 	if isWriter() {
 		if err := bootstrap(a, srv); err != nil {
 			return err
+		}
+		if err := a.svc.EdgeWriteSettings(); err != nil {
+			slog.Error("写入内容分发设置失败", "err", err)
 		}
 	}
 	go housekeeping(a, isWriter)
@@ -327,11 +340,19 @@ func housekeeping(a *app, isWriter func() bool) {
 			a.store.PurgeExpiredSessions()
 			a.store.TrimAudit(50000)
 		}
+		// 文件在 R2 上时，每小时重写一遍访问控制信息，兜底修复漏写的变更
+		if w && a.svc.EdgeEnabled() {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+			if _, err := a.svc.EdgeResync(ctx, false); err != nil {
+				slog.Error("同步内容分发信息失败", "err", err)
+			}
+			cancel()
+		}
 		if n, freed, err := a.svc.GC(w); err == nil && n > 0 {
 			slog.Info("清理无引用文件", "files", n, "freed", auth.FormatBytes(freed))
 		}
-		// 每 6 小时检查一次本机文件是否完整，缺失的从其他机器或 R2 取回
-		if runs%6 == 0 {
+		// 文件存本机时，每 6 小时检查一次是否完整，缺失的从其他机器取回
+		if a.r2 == nil && runs%6 == 0 {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 			if n, err := a.svc.Repair(ctx); n > 0 || err != nil {
 				slog.Info("补齐本机缺失的文件", "files", n, "err", err)
@@ -589,6 +610,32 @@ func cmdCheck(args []string) error {
 		}
 	}
 	return nil
+}
+
+func cmdContentKey() error {
+	a, err := openCLI(false)
+	if err != nil {
+		return err
+	}
+	defer a.store.Close()
+	fmt.Println(a.signer.ContentKey())
+	return nil
+}
+
+func cmdBackfillRender() error {
+	a, err := openCLI(false)
+	if err != nil {
+		return err
+	}
+	defer a.store.Close()
+	viewerFS, _ := fs.Sub(assets.FS, "web/viewer")
+	srv := &httpapi.Server{Cfg: a.cfg, Store: a.store, Svc: a.svc, Signer: a.signer, ViewerFS: viewerFS, LibFS: a.libFS}
+	if err := srv.Init(); err != nil {
+		return err
+	}
+	n, err := a.svc.EdgeResync(context.Background(), true)
+	fmt.Printf("已处理 %d 个 artifact\n", n)
+	return err
 }
 
 func cmdGC() error {

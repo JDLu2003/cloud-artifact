@@ -64,6 +64,9 @@ func (s *Server) Init() error {
 		return err
 	}
 	s.tpl = t
+	if s.Svc != nil {
+		s.Svc.RenderMarkdown = s.markdownPage
+	}
 	s.routes()
 	return nil
 }

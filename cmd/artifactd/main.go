@@ -135,6 +135,7 @@ func open() (*app, error) {
 	// 配置了 ARTIFACT_S3_* 时，artifact 文件直接写入 R2（即时上传，所有机器共用），
 	// 集群只复制数据库里的控制信息；没有配置时文件存本机，由机器之间互相推送。
 	libFS, _ := fs.Sub(assets.FS, "web/lib")
+	skillpack.Repo, skillpack.Ref = cfg.SkillRepo, cfg.SkillRef
 	a := &app{cfg: cfg, store: st, libFS: libFS}
 	var bl *blob.Store
 	if c, ok := r2Config(a); ok {

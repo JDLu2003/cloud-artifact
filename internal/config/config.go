@@ -19,6 +19,8 @@ type Config struct {
 	// LoginPasswordHash 非空时后台只用密码登录（不填用户名），登录后即为 AdminUser。
 	// 由 VPS 管理器下发其管理员密码的 bcrypt 哈希，两边共用同一个密码。
 	LoginPasswordHash string
+	SkillRepo         string // 技能所在的 GitHub 仓库（owner/name）
+	SkillRef          string // 技能所在的分支
 	AdminPassword     string
 	Secret            string // HMAC 密钥；为空时自动生成并保存在数据库里
 	MinFreeDiskMB     int64  // 磁盘剩余低于该值时拒绝写入
@@ -77,6 +79,8 @@ func Load() (*Config, error) {
 		DataDir:           env("ARTIFACT_DATA_DIR", "./data"),
 		AdminUser:         env("ARTIFACT_ADMIN_USER", "admin"),
 		LoginPasswordHash: env("ARTIFACT_LOGIN_PASSWORD_HASH", ""),
+		SkillRepo:         env("ARTIFACT_SKILL_REPO", "JDLu2003/cloud-artifact"),
+		SkillRef:          env("ARTIFACT_SKILL_REF", "main"),
 		AdminPassword:     env("ARTIFACT_ADMIN_PASSWORD", ""),
 		Secret:            env("ARTIFACT_SECRET", ""),
 		MinFreeDiskMB:     envInt("ARTIFACT_MIN_FREE_DISK_MB", 300),

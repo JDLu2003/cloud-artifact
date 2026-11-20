@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"vps-artifact/internal/artifact"
+	"vps-artifact/internal/skillpack"
 	"vps-artifact/internal/store"
 )
 
@@ -82,7 +83,7 @@ func (s *Server) pageHome(w http.ResponseWriter, r *http.Request) {
 	u, _ := s.sessionUser(r)
 	pub, _ := s.Store.ListArtifacts(store.ListQuery{Visibility: "public", Limit: 12})
 	s.render(w, 200, "home.tmpl", map[string]any{
-		"User": u, "Server": s.Cfg.PublicURL, "Public": pub.Items, "SkillVersion": s.Skill.Version, "Version": s.Version,
+		"User": u, "Server": s.Cfg.PublicURL, "Public": pub.Items, "SkillVersion": s.Skill.Version, "SkillURL": skillpack.PageURL(), "Version": s.Version,
 	})
 }
 
